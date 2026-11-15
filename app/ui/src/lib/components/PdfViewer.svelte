@@ -6,7 +6,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { ZoomIn, ZoomOut, ChevronUp, ChevronDown, MoveHorizontal } from "@lucide/svelte";
-  import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist/legacy/build/pdf.mjs";
+  import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs-dist/legacy/build/pdf.mjs";
   import Spinner from "./Spinner.svelte";
   import { clamp } from "../utils/misc";
 
@@ -14,6 +14,7 @@
 
   const CSS_UNITS = 96 / 72;
   let doc: PDFDocumentProxy | null = null;
+  let docTask: PDFDocumentLoadingTask | null = null;
   let pageSizes = $state<{ w: number; h: number }[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -36,13 +37,14 @@
         const worker = await import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url");
         pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
       }
-      const task = pdfjs.getDocument({ url: src, isEvalSupported: false });
+      const task = pdfjs.getDocument({ url: src });
       const d = await task.promise;
       if (seq !== loadSeq) {
-        void d.destroy();
+        void task.destroy();
         return;
       }
-      await doc?.destroy();
+      await docTask?.destroy();
+      docTask = task;
       doc = d;
       const first = await d.getPage(1);
       const vp = first.getViewport({ scale: 1 });
@@ -62,7 +64,7 @@
 
   onDestroy(() => {
     loadSeq++;
-    void doc?.destroy();
+    void docTask?.destroy();
     io?.disconnect();
   });
 

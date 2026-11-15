@@ -23,8 +23,9 @@
       ? 'bg-accent'
       : 'bg-surface-3'}"
     onclick={() => {
-      checked = !checked;
-      onchange?.(checked);
+      // Controlled when `onchange` is given (the parent decides); otherwise bindable.
+      if (onchange) onchange(!checked);
+      else checked = !checked;
     }}
   >
     <span class="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform {checked ? 'translate-x-4' : 'translate-x-0.5'}"></span>

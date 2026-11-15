@@ -10,6 +10,7 @@ import type { MediaRef } from "../bindings/MediaRef";
 import type { Message } from "../bindings/Message";
 import type { Rule } from "../bindings/Rule";
 import { hashString, mulberry32 } from "../utils/misc";
+import { mediaEmoji } from "../utils/format";
 import {
   MOCK_AUDIO_URL, MOCK_PDF_URL, MOCK_VIDEO_URL, pdfThumbSvg, photoSvg, stickerSvg, textDataUrl, videoPosterSvg,
 } from "./assets";
@@ -381,9 +382,7 @@ export function generateSeed(nowSec: number = Math.floor(Date.now() / 1000), see
   };
 }
 
-export function mediaEmoji(kind: MediaKind): string {
-  return { image: "📷", video: "🎥", audio: "🎤", document: "📄", sticker: "💟" }[kind];
-}
+export { mediaEmoji };
 
 function seedRules(now: number, chats: MockChat[]): Rule[] {
   const fam = chats.find((c) => c.name.startsWith("Family"));

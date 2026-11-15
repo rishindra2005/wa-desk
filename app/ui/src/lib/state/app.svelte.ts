@@ -45,6 +45,8 @@ class AppState {
   searchText = $state("");
   searchNonce = $state(0);
   systemDark = $state(false);
+  /** Media item handed to the Tools converter (from Docs / Media). */
+  toolsInput = $state<{ chatJid: string; messageId: string; label: string } | null>(null);
   /** Theme preview before settings load (persisted locally to avoid a flash). */
   localTheme = $state<Theme>("system");
 

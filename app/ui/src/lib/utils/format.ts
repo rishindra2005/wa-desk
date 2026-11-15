@@ -206,3 +206,8 @@ export function fromDateInput(s: string, endOfDay = false): number | null {
   if (endOfDay) d.setHours(23, 59, 59, 0);
   return Math.floor(d.getTime() / 1000);
 }
+
+/** Emoji used to label a media kind in previews. */
+export function mediaEmoji(kind: "image" | "video" | "audio" | "document" | "sticker"): string {
+  return { image: "📷", video: "🎥", audio: "🎤", document: "📄", sticker: "💟" }[kind];
+}

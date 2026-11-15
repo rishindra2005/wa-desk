@@ -1,6 +1,8 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
+
+const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {};
 
 // Tauri expects a fixed dev port; fail instead of silently picking another.
 export default defineConfig({
@@ -14,5 +16,5 @@ export default defineConfig({
     include: ["src/**/*.test.ts"],
     setupFiles: ["src/test-setup.ts"],
   },
-  resolve: process.env.VITEST ? { conditions: ["browser"] } : undefined,
+  resolve: env.VITEST ? { conditions: ["browser"] } : undefined,
 });

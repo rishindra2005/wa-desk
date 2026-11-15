@@ -26,7 +26,7 @@
   let scale = $state(1);
   let tx = $state(0);
   let ty = $state(0);
-  let drag: { x: number; y: number; tx: number; ty: number } | null = null;
+  let drag = $state<{ x: number; y: number; tx: number; ty: number } | null>(null);
 
   const item = $derived(items[index]);
 
