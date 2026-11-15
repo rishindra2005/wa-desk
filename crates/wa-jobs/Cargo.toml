@@ -14,13 +14,14 @@ tracing.workspace = true
 sha2.workspace = true
 hex.workspace = true
 image.workspace = true
-nix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
 uuid.workspace = true
 parking_lot.workspace = true
 chrono.workspace = true
+percent-encoding.workspace = true
+nix = { workspace = true, features = ["signal", "process"] }
 
 [dev-dependencies]
 tempfile.workspace = true
