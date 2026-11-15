@@ -42,3 +42,6 @@ wa-testkit.workspace = true
 tempfile.workspace = true
 axum.workspace = true
 rusqlite.workspace = true
+zip.workspace = true
+image.workspace = true
+chrono.workspace = true

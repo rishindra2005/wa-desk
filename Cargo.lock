@@ -5221,9 +5221,14 @@ dependencies = [
 name = "wa-desk"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "image",
  "mime_guess",
  "parking_lot",
  "percent-encoding",
+ "rusqlite",
  "serde",
  "serde_json",
  "tauri",
@@ -5235,6 +5240,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
  "wa-automation",
  "wa-bridge",
@@ -5243,6 +5249,7 @@ dependencies = [
  "wa-jobs",
  "wa-obs",
  "wa-testkit",
+ "zip",
 ]
 
 [[package]]
