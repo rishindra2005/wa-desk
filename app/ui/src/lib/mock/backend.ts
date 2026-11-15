@@ -625,8 +625,8 @@ export class MockBackend {
         job.phase = spec.type === "phone_sync" ? "connecting" : spec.type === "convert" ? "converting" : "scanning";
       }
       if (spec.type === "phone_sync" && ticks >= 4) {
-        this.finishJob(job, "failed", "adb: no devices/emulators found");
-        this.recordIssue("Phone sync failed: no USB device", "external", "jobs.phone_sync", "adb: no devices/emulators found");
+        this.finishJob(job, "failed", "No phone connected over USB (enable File transfer)");
+        this.recordIssue("Phone sync failed: no USB device", "external", "jobs.phone_sync", "No phone connected over USB (enable File transfer)");
         return;
       }
       const step = Math.max(1, Math.ceil(total / 25));

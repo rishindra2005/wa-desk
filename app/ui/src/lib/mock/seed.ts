@@ -517,7 +517,7 @@ function seedIssues(now: number): Issue[] {
     {
       id: 2, fingerprint: "b7d210", title: "Phone sync failed: no USB device", kind: "external", source: "jobs.phone_sync",
       count: 3, first_seen: now - 2 * 86_400, last_seen: now - 86_400,
-      last_detail: "adb: no devices/emulators found", status: "open",
+      last_detail: "No phone connected over USB (enable File transfer)", status: "open",
     },
     {
       id: 3, fingerprint: "c044e8", title: "Thumbnail generation failed for 3 videos", kind: "external", source: "jobs.thumbnails",
@@ -546,7 +546,7 @@ function seedJobs(now: number): JobRecord[] {
     },
     {
       id: 2, spec: { type: "phone_sync" }, label: "Phone sync (USB)", status: "failed", done: 0, total: 0, phase: "connecting",
-      message: null, error: "adb: no devices/emulators found", outputs: [], created_at: now - 86_400 * 1.2, finished_at: now - 86_400 * 1.2 + 3,
+      message: null, error: "No phone connected over USB (enable File transfer)", outputs: [], created_at: now - 86_400 * 1.2, finished_at: now - 86_400 * 1.2 + 3,
     },
     {
       id: 1, spec: { type: "backfill", days: 30, kinds: ["image", "document"], workers: 4, retry_failed: false },

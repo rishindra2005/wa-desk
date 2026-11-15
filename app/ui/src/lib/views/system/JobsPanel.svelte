@@ -41,7 +41,7 @@
 
   const actions = [
     { id: "backfill", label: "Backfill media", desc: "Download missing media from WhatsApp", icon: Download, run: () => (form = "backfill") },
-    { id: "phone_sync", label: "Phone sync (USB)", desc: "Copy media from your phone over adb", icon: Smartphone, run: () => (form = "phone_sync") },
+    { id: "phone_sync", label: "Phone sync (USB)", desc: "Copy WhatsApp media from your phone over USB (File transfer)", icon: Smartphone, run: () => (form = "phone_sync") },
     { id: "link", label: "Link phone media", desc: "Match files in your folders to messages", icon: Link2, run: () => start({ type: "link_phone_media", extra_dirs: app.settings?.link_extra_dirs ?? [] }) },
     { id: "reindex", label: "Rebuild index", desc: "Rebuild the full-text search index", icon: DatabaseZap, run: () => start({ type: "reindex" }) },
     { id: "thumbs", label: "Thumbnails", desc: "Pre-generate image/video/PDF thumbnails", icon: ImagePlus, run: () => start({ type: "thumbnails" }) },
@@ -100,10 +100,10 @@
 {:else if form === "phone_sync"}
   <Modal title="Phone sync over USB" onclose={() => (form = null)}>
     <ol class="list-decimal space-y-1.5 pl-5 text-[13px]">
-      <li>Enable <strong>Developer options → USB debugging</strong> on your Android phone.</li>
-      <li>Connect it with a USB cable and unlock the screen.</li>
-      <li>Accept the <strong>“Allow USB debugging?”</strong> prompt on the phone.</li>
-      <li>Start the sync — WhatsApp media folders are copied and linked to messages.</li>
+      <li>Connect your Android phone with a USB cable and unlock the screen.</li>
+      <li>In the USB notification on the phone, choose <strong>File transfer</strong>.</li>
+      <li>Keep the phone unlocked while it copies — WhatsApp media folders are copied (nothing is deleted).</li>
+      <li>Afterwards run <strong>Link phone media</strong> to attach the files to their messages.</li>
     </ol>
     {#snippet footer()}
       <button class="btn" onclick={() => (form = null)}>Cancel</button>
