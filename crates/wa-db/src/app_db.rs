@@ -865,12 +865,12 @@ mod tests {
             content: "hello world".into(),
         };
         assert_eq!(
-            db.write(|tx| AppDb::upsert_index(tx, &[row.clone()]))
+            db.write(|tx| AppDb::upsert_index(tx, std::slice::from_ref(&row)))
                 .unwrap(),
             1
         );
         assert_eq!(
-            db.write(|tx| AppDb::upsert_index(tx, &[row.clone()]))
+            db.write(|tx| AppDb::upsert_index(tx, std::slice::from_ref(&row)))
                 .unwrap(),
             0
         );
@@ -907,7 +907,7 @@ mod tests {
             store_path: None,
             matched_by: "hash".into(),
         };
-        db.upsert_phone_links(&[l.clone()]).unwrap();
+        db.upsert_phone_links(std::slice::from_ref(&l)).unwrap();
         db.upsert_phone_links(&[LinkRecord {
             store_path: Some("/s/x.jpg".into()),
             ..l

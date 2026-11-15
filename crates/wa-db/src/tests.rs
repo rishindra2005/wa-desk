@@ -1090,7 +1090,6 @@ fn full_rebuild_resets() {
 }
 
 #[test]
-#[cfg_attr(debug_assertions, ignore = "perf: run with --release")]
 fn perf_index_20k_rows() {
     let f = Fixture::standard();
     bulk(&f, GROUP_CLASS, 20_000, 1_700_000_000, "Z");
