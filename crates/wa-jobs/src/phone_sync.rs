@@ -121,7 +121,10 @@ pub async fn run(deps: &JobDeps, ctl: &Arc<JobCtl>) -> Result<String> {
                     last_err = None;
                     break;
                 }
-                Err(e) if e.kind == ErrorKind::Cancelled || e.message.ends_with("is not installed") => {
+                Err(e)
+                    if e.kind == ErrorKind::Cancelled
+                        || e.message.ends_with("is not installed") =>
+                {
                     return Err(e);
                 }
                 Err(e) => {
@@ -167,7 +170,12 @@ async fn sync_folder(
     let mut on_line = move |l: &str| {
         if let Some((bytes, pct)) = parse_progress2(l) {
             let mb = bytes / (1024 * 1024);
-            ctl2.progress(base + u64::from(pct), n * 100, &name2, Some(&format!("{mb} MB copied")));
+            ctl2.progress(
+                base + u64::from(pct),
+                n * 100,
+                &name2,
+                Some(&format!("{mb} MB copied")),
+            );
         }
     };
     Tool::new("rsync", &deps.tools.rsync)

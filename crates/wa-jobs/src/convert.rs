@@ -84,7 +84,10 @@ async fn resolve_input(deps: &JobDeps, input: &ConvertInput) -> Result<(PathBuf,
     let (path, name) = match input {
         ConvertInput::File { path } => {
             let p = PathBuf::from(path);
-            (p.clone(), p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            (
+                p.clone(),
+                p.file_name().map(|n| n.to_string_lossy().into_owned()),
+            )
         }
         ConvertInput::Message {
             chat_jid,
@@ -97,11 +100,17 @@ async fn resolve_input(deps: &JobDeps, input: &ConvertInput) -> Result<(PathBuf,
                 .ok_or_else(|| AppError::not_found("message has no media"))?;
             let local = match info.local_path.filter(|p| p.is_file()) {
                 Some(p) => p,
-                None => deps.bridge.download(chat_jid, message_id, false).await?.path,
+                None => {
+                    deps.bridge
+                        .download(chat_jid, message_id, false)
+                        .await?
+                        .path
+                }
             };
-            let name = info.filename.clone().or_else(|| {
-                local.file_name().map(|n| n.to_string_lossy().into_owned())
-            });
+            let name = info
+                .filename
+                .clone()
+                .or_else(|| local.file_name().map(|n| n.to_string_lossy().into_owned()));
             (local, name)
         }
     };
@@ -219,7 +228,10 @@ async fn convert_file(
             let total_ms = duration.map_or(0, |d| (d * 1000.0) as u64);
             let ctl2 = ctl.clone();
             let mut on_line = move |l: &str| {
-                if let Some(us) = l.strip_prefix("out_time_us=").and_then(|v| v.parse::<u64>().ok()) {
+                if let Some(us) = l
+                    .strip_prefix("out_time_us=")
+                    .and_then(|v| v.parse::<u64>().ok())
+                {
                     let ms = us / 1000;
                     let done = if total_ms > 0 { ms.min(total_ms) } else { ms };
                     ctl2.progress(done, total_ms, "encoding video", None);
@@ -229,7 +241,14 @@ async fn convert_file(
             ffmpeg(tools)
                 .arg("-i")
                 .arg(src)
-                .args(["-c:v", "libx264", "-preset", "medium", "-crf", &crf.to_string()])
+                .args([
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "medium",
+                    "-crf",
+                    &crf.to_string(),
+                ])
                 .args(["-vf", &scale, "-pix_fmt", "yuv420p"])
                 .args(["-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"])
                 .args(["-progress", "pipe:1", "-nostats"])
@@ -245,7 +264,12 @@ async fn convert_file(
             let mut out_arg = std::ffi::OsString::from("-sOutputFile=");
             out_arg.push(&out);
             Tool::new("gs", &tools.gs)
-                .args(["-sDEVICE=pdfwrite", "-dCompatibilityLevel=1.5", "-dNOPAUSE", "-dQUIET"])
+                .args([
+                    "-sDEVICE=pdfwrite",
+                    "-dCompatibilityLevel=1.5",
+                    "-dNOPAUSE",
+                    "-dQUIET",
+                ])
                 .args(["-dBATCH", "-dSAFER"])
                 .arg(format!("-dPDFSETTINGS={setting}"))
                 .arg(out_arg)
@@ -261,7 +285,13 @@ async fn convert_file(
             ffmpeg(tools)
                 .arg("-i")
                 .arg(src)
-                .args(["-vn", "-c:a", "libopus", "-b:a", &format!("{bitrate_kbps}k")])
+                .args([
+                    "-vn",
+                    "-c:a",
+                    "libopus",
+                    "-b:a",
+                    &format!("{bitrate_kbps}k"),
+                ])
                 .args(["-vbr", "on", "-application", "voip"])
                 .arg(&out)
                 .timeout(TOOL_TIMEOUT)
@@ -282,7 +312,11 @@ async fn convert_file(
                 .flatten()
                 .filter_map(|e| {
                     let n = e.file_name().to_string_lossy().into_owned();
-                    let num = n.strip_prefix("page-")?.strip_suffix(".png")?.parse().ok()?;
+                    let num = n
+                        .strip_prefix("page-")?
+                        .strip_suffix(".png")?
+                        .parse()
+                        .ok()?;
                     Some((num, e.path()))
                 })
                 .collect();
@@ -299,12 +333,25 @@ async fn convert_file(
 }
 
 fn ffmpeg(tools: &Tools) -> Tool {
-    Tool::new("ffmpeg", &tools.ffmpeg).args(["-y", "-hide_banner", "-nostdin", "-loglevel", "error"])
+    Tool::new("ffmpeg", &tools.ffmpeg).args([
+        "-y",
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        "error",
+    ])
 }
 
 async fn probe_duration(tools: &Tools, src: &Path, cancel: &CancellationToken) -> Option<f64> {
     let out = Tool::new("ffprobe", &tools.ffprobe)
-        .args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"])
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
+        ])
         .arg(src)
         .timeout(Duration::from_secs(30))
         .run(cancel, None)
@@ -315,7 +362,9 @@ async fn probe_duration(tools: &Tools, src: &Path, cancel: &CancellationToken) -
 
 /// Decode (respecting EXIF orientation), resize to fit `max_dim` with Lanczos3.
 pub(crate) fn load_oriented(src: &Path) -> Result<DynamicImage> {
-    let bad = |e: image::ImageError| AppError::invalid("unsupported or damaged image").with_detail(e.to_string());
+    let bad = |e: image::ImageError| {
+        AppError::invalid("unsupported or damaged image").with_detail(e.to_string())
+    };
     let mut dec = ImageReader::open(src)?
         .with_guessed_format()?
         .into_decoder()
@@ -328,18 +377,30 @@ pub(crate) fn load_oriented(src: &Path) -> Result<DynamicImage> {
     Ok(img)
 }
 
-fn compress_image(src: &Path, work: &Path, quality: u8, max_dim: u32, f: ImageFormat) -> Result<PathBuf> {
+fn compress_image(
+    src: &Path,
+    work: &Path,
+    quality: u8,
+    max_dim: u32,
+    f: ImageFormat,
+) -> Result<PathBuf> {
     let mut img = load_oriented(src)?;
     if img.width() > max_dim || img.height() > max_dim {
         img = img.resize(max_dim, max_dim, FilterType::Lanczos3);
     }
-    let enc = |e: image::ImageError| AppError::internal("could not encode image").with_detail(e.to_string());
+    let enc = |e: image::ImageError| {
+        AppError::internal("could not encode image").with_detail(e.to_string())
+    };
     match f {
         ImageFormat::Png => {
             let out = work.join("out.png");
             let w = std::io::BufWriter::new(std::fs::File::create(&out)?);
-            img.write_with_encoder(PngEncoder::new_with_quality(w, CompressionType::Best, PngFilter::Adaptive))
-                .map_err(enc)?;
+            img.write_with_encoder(PngEncoder::new_with_quality(
+                w,
+                CompressionType::Best,
+                PngFilter::Adaptive,
+            ))
+            .map_err(enc)?;
             Ok(out)
         }
         _ => {
@@ -375,7 +436,14 @@ pub(crate) async fn office_to_pdf(
     };
     Tool::new("soffice", &tools.soffice)
         .arg(format!("-env:UserInstallation={profile_url}"))
-        .args(["--headless", "--norestore", "--nolockcheck", "--convert-to", "pdf", "--outdir"])
+        .args([
+            "--headless",
+            "--norestore",
+            "--nolockcheck",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+        ])
         .arg(work)
         .arg(src)
         .timeout(OFFICE_TIMEOUT)
@@ -396,9 +464,18 @@ mod tests {
     fn validates_parameters() {
         let ok = [
             ConvertKind::OfficeToPdf,
-            ConvertKind::ImageCompress { quality: 80, max_dim: 1600, format: ImageFormat::Jpeg },
-            ConvertKind::VideoCompress { crf: 28, max_height: 720 },
-            ConvertKind::PdfCompress { level: "ebook".into() },
+            ConvertKind::ImageCompress {
+                quality: 80,
+                max_dim: 1600,
+                format: ImageFormat::Jpeg,
+            },
+            ConvertKind::VideoCompress {
+                crf: 28,
+                max_height: 720,
+            },
+            ConvertKind::PdfCompress {
+                level: "ebook".into(),
+            },
             ConvertKind::AudioToOpus { bitrate_kbps: 32 },
             ConvertKind::PdfToImages { dpi: 150 },
         ];
@@ -406,16 +483,35 @@ mod tests {
             assert!(validate_kind(&k).is_ok(), "{k:?}");
         }
         let bad = [
-            ConvertKind::ImageCompress { quality: 0, max_dim: 1600, format: ImageFormat::Jpeg },
-            ConvertKind::ImageCompress { quality: 80, max_dim: 1, format: ImageFormat::Png },
-            ConvertKind::VideoCompress { crf: 60, max_height: 720 },
-            ConvertKind::PdfCompress { level: "prepress".into() },
-            ConvertKind::PdfCompress { level: "/screen".into() },
+            ConvertKind::ImageCompress {
+                quality: 0,
+                max_dim: 1600,
+                format: ImageFormat::Jpeg,
+            },
+            ConvertKind::ImageCompress {
+                quality: 80,
+                max_dim: 1,
+                format: ImageFormat::Png,
+            },
+            ConvertKind::VideoCompress {
+                crf: 60,
+                max_height: 720,
+            },
+            ConvertKind::PdfCompress {
+                level: "prepress".into(),
+            },
+            ConvertKind::PdfCompress {
+                level: "/screen".into(),
+            },
             ConvertKind::AudioToOpus { bitrate_kbps: 1 },
             ConvertKind::PdfToImages { dpi: 5000 },
         ];
         for k in bad {
-            assert_eq!(validate_kind(&k).unwrap_err().kind, wa_core::ErrorKind::Invalid, "{k:?}");
+            assert_eq!(
+                validate_kind(&k).unwrap_err().kind,
+                wa_core::ErrorKind::Invalid,
+                "{k:?}"
+            );
         }
     }
 }

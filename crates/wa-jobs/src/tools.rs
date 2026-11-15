@@ -116,7 +116,8 @@ impl Tool {
             if e.kind() == std::io::ErrorKind::NotFound {
                 AppError::external(format!("{} is not installed", self.name))
             } else {
-                AppError::external(format!("could not start {}", self.name)).with_detail(e.to_string())
+                AppError::external(format!("could not start {}", self.name))
+                    .with_detail(e.to_string())
             }
         })?;
         let pgid = child.id().and_then(|p| i32::try_from(p).ok());
@@ -299,7 +300,13 @@ mod tests {
         assert_eq!(e.kind, ErrorKind::External);
         assert!(e.message.contains("exit code 3"));
         assert_eq!(e.detail.as_deref(), Some("boom"));
-        assert!(sh("exit 24").ok_code(24).run(&CancellationToken::new(), None).await.is_ok());
+        assert!(
+            sh("exit 24")
+                .ok_code(24)
+                .run(&CancellationToken::new(), None)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -324,7 +331,11 @@ mod tests {
             c2.cancel();
         });
         let t0 = Instant::now();
-        let e = Tool::new("sleep", Path::new("sleep")).arg("30").run(&c, None).await.unwrap_err();
+        let e = Tool::new("sleep", Path::new("sleep"))
+            .arg("30")
+            .run(&c, None)
+            .await
+            .unwrap_err();
         assert_eq!(e.kind, ErrorKind::Cancelled);
         assert!(t0.elapsed() < Duration::from_millis(3500));
     }
@@ -347,8 +358,15 @@ mod tests {
         let e = sh(&script).run(&c, None).await.unwrap_err();
         let el = t0.elapsed();
         assert_eq!(e.kind, ErrorKind::Cancelled);
-        assert!(el >= Duration::from_millis(3000) && el < Duration::from_millis(4800), "{el:?}");
-        let pid: i32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+        assert!(
+            el >= Duration::from_millis(3000) && el < Duration::from_millis(4800),
+            "{el:?}"
+        );
+        let pid: i32 = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
         // The grandchild was in our group and must be gone (or a zombie reaped by init).
         let alive = std::fs::read_to_string(format!("/proc/{pid}/stat"))

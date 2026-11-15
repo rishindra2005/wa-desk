@@ -24,7 +24,10 @@ const THUMB_TIMEOUT: Duration = Duration::from_secs(60);
 
 fn cache_key(src: &Path, tag: &str) -> Result<String> {
     let (mtime, size) = file_identity(src)?;
-    Ok(sha256_hex(&format!("{}|{mtime}|{size}|{tag}", src.display())))
+    Ok(sha256_hex(&format!(
+        "{}|{mtime}|{size}|{tag}",
+        src.display()
+    )))
 }
 
 /// Office document → cached PDF in `cache/previews` (key: path|mtime|size).
@@ -53,7 +56,10 @@ pub async fn office_preview_with(
 }
 
 fn is_pdf(src: &Path) -> bool {
-    if src.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")) {
+    if src
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
+    {
         return true;
     }
     let mut head = [0u8; 5];
@@ -66,7 +72,14 @@ fn is_pdf(src: &Path) -> bool {
 /// 256 px thumbnail cached in `cache/thumbs`. `Ok(None)` when the kind/file
 /// has no thumbnail (audio, non-PDF documents, undecodable images).
 pub async fn thumbnail(paths: &Paths, src: &Path, kind: MediaKind) -> Result<Option<PathBuf>> {
-    thumbnail_with(paths, &Tools::default(), src, kind, &CancellationToken::new()).await
+    thumbnail_with(
+        paths,
+        &Tools::default(),
+        src,
+        kind,
+        &CancellationToken::new(),
+    )
+    .await
 }
 
 /// `thumbnail` with explicit tools/cancellation.
@@ -106,7 +119,9 @@ fn image_thumb(src: &Path, dir: &Path, key: &str) -> Result<Option<PathBuf>> {
         Err(e) => return Err(e),
     };
     let t = img.resize(THUMB_SIZE, THUMB_SIZE, FilterType::Lanczos3);
-    let enc = |e: image::ImageError| AppError::internal("could not encode thumbnail").with_detail(e.to_string());
+    let enc = |e: image::ImageError| {
+        AppError::internal("could not encode thumbnail").with_detail(e.to_string())
+    };
     let tmp = dir.join(format!(".{key}.{}.tmp", uuid::Uuid::new_v4()));
     let out = if t.color().has_alpha() {
         let w = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
@@ -138,7 +153,16 @@ async fn video_thumb(
     // 1 s in avoids black first frames; very short clips fall back to 0 s.
     for seek in ["1", "0"] {
         let r = Tool::new("ffmpeg", &tools.ffmpeg)
-            .args(["-y", "-hide_banner", "-nostdin", "-loglevel", "error", "-ss", seek, "-i"])
+            .args([
+                "-y",
+                "-hide_banner",
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-ss",
+                seek,
+                "-i",
+            ])
             .arg(src)
             .args(["-frames:v", "1", "-vf", &scale])
             .arg(&tmp)
@@ -151,7 +175,9 @@ async fn video_thumb(
                 return Ok(Some(out.to_path_buf()));
             }
             Ok(_) => continue,
-            Err(e) if e.kind == ErrorKind::External && !e.message.contains("not installed") => continue,
+            Err(e) if e.kind == ErrorKind::External && !e.message.contains("not installed") => {
+                continue;
+            }
             Err(e) => return Err(e),
         }
     }
@@ -168,7 +194,17 @@ async fn pdf_thumb(
     let work = WorkDir::new(&paths.cache)?;
     let prefix = work.path().join("t");
     let r = Tool::new("pdftoppm", &tools.pdftoppm)
-        .args(["-f", "1", "-l", "1", "-scale-to", &THUMB_SIZE.to_string(), "-jpeg", "-singlefile", "--"])
+        .args([
+            "-f",
+            "1",
+            "-l",
+            "1",
+            "-scale-to",
+            &THUMB_SIZE.to_string(),
+            "-jpeg",
+            "-singlefile",
+            "--",
+        ])
         .arg(src)
         .arg(&prefix)
         .timeout(THUMB_TIMEOUT)
@@ -195,11 +231,19 @@ pub async fn run_job(deps: &JobDeps, ctl: &Arc<JobCtl>) -> Result<String> {
     let rows = blocking(move || {
         store.media_rows(
             None,
-            &[MediaKind::Image, MediaKind::Video, MediaKind::Sticker, MediaKind::Document],
+            &[
+                MediaKind::Image,
+                MediaKind::Video,
+                MediaKind::Sticker,
+                MediaKind::Document,
+            ],
         )
     })
     .await?;
-    let rows: Vec<_> = rows.into_iter().filter(|r| r.local_path.is_some()).collect();
+    let rows: Vec<_> = rows
+        .into_iter()
+        .filter(|r| r.local_path.is_some())
+        .collect();
     let total = rows.len() as u64;
     let (mut made, mut none, mut failed) = (0u64, 0u64, 0u64);
     for (i, r) in rows.iter().enumerate() {

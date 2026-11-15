@@ -81,7 +81,9 @@ pub fn default_phone_root() -> PathBuf {
         return PathBuf::from(d).join("gvfs");
     }
     use std::os::unix::fs::MetadataExt;
-    let uid = std::fs::metadata("/proc/self").map(|m| m.uid()).unwrap_or(1000);
+    let uid = std::fs::metadata("/proc/self")
+        .map(|m| m.uid())
+        .unwrap_or(1000);
     PathBuf::from(format!("/run/user/{uid}/gvfs"))
 }
 
@@ -269,7 +271,10 @@ impl JobManager {
         let ctl = {
             let mut running = inner.running.lock();
             if kind != "convert" && running.values().any(|r| r.kind == kind) {
-                return Err(AppError::busy(format!("{} is already running", spec.label())));
+                return Err(AppError::busy(format!(
+                    "{} is already running",
+                    spec.label()
+                )));
             }
             let mut rec = JobRecord {
                 id: 0,

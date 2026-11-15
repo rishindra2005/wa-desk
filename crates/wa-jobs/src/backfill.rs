@@ -110,13 +110,19 @@ pub async fn run(
     let old_skip = read_skip_list(&skip_path);
     let total_rows = rows.len();
     rows.retain(|r| {
-        r.local_path.is_none() && (retry_failed || !old_skip.contains(&skip_key(&r.chat_jid, &r.message_id)))
+        r.local_path.is_none()
+            && (retry_failed || !old_skip.contains(&skip_key(&r.chat_jid, &r.message_id)))
     });
     order(&mut rows);
     let skipped = total_rows - rows.len();
     let total = rows.len() as u64;
     tracing::info!(total, skipped, days, "backfill starting");
-    ctl.progress(0, total, "downloading", Some(&format!("{total} to fetch, {skipped} already done/skipped")));
+    ctl.progress(
+        0,
+        total,
+        "downloading",
+        Some(&format!("{total} to fetch, {skipped} already done/skipped")),
+    );
 
     let workers = usize::from(workers.clamp(1, 8));
     let mut set: JoinSet<(String, Outcome)> = JoinSet::new();
@@ -140,7 +146,9 @@ pub async fn run(
                 (key, res.map_or_else(classify, |_| Outcome::Ok))
             });
         }
-        let Some(joined) = set.join_next().await else { break };
+        let Some(joined) = set.join_next().await else {
+            break;
+        };
         done += 1;
         match joined {
             Ok((key, Outcome::Ok)) => {
@@ -157,7 +165,12 @@ pub async fn run(
                 fatal.get_or_insert(e);
             }
         }
-        ctl.progress(done, total, "downloading", Some(&format!("ok {ok}, unavailable {}", failed.len())));
+        ctl.progress(
+            done,
+            total,
+            "downloading",
+            Some(&format!("ok {ok}, unavailable {}", failed.len())),
+        );
     }
 
     if retry_failed {
@@ -208,10 +221,22 @@ mod tests {
 
     #[test]
     fn classifies_errors() {
-        assert!(matches!(classify(AppError::external("expired")), Outcome::Unavailable));
-        assert!(matches!(classify(AppError::not_found("x")), Outcome::Unavailable));
-        assert!(matches!(classify(AppError::timeout("x")), Outcome::Transient));
-        assert!(matches!(classify(AppError::bridge_down("x")), Outcome::Fatal(_)));
+        assert!(matches!(
+            classify(AppError::external("expired")),
+            Outcome::Unavailable
+        ));
+        assert!(matches!(
+            classify(AppError::not_found("x")),
+            Outcome::Unavailable
+        ));
+        assert!(matches!(
+            classify(AppError::timeout("x")),
+            Outcome::Transient
+        ));
+        assert!(matches!(
+            classify(AppError::bridge_down("x")),
+            Outcome::Fatal(_)
+        ));
         assert!(matches!(classify(AppError::auth("x")), Outcome::Fatal(_)));
     }
 }

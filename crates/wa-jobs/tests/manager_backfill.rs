@@ -14,7 +14,9 @@ use wa_jobs::{JobEvent, Tool};
 
 fn convert_spec() -> JobSpec {
     JobSpec::Convert(ConvertSpec {
-        input: ConvertInput::File { path: "/nonexistent".into() },
+        input: ConvertInput::File {
+            path: "/nonexistent".into(),
+        },
         kind: ConvertKind::OfficeToPdf,
         output_dir: None,
     })
@@ -60,7 +62,14 @@ async fn same_kind_is_busy_and_cancel_works() {
     let b = m.start_custom(JobSpec::Thumbnails, job).unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(m.get(a.id).unwrap().status, JobStatus::Running);
-    assert_eq!(m.list(10).unwrap().iter().filter(|j| j.status == JobStatus::Running).count(), 2);
+    assert_eq!(
+        m.list(10)
+            .unwrap()
+            .iter()
+            .filter(|j| j.status == JobStatus::Running)
+            .count(),
+        2
+    );
     m.cancel(a.id).unwrap();
     assert_eq!(ev.finished(a.id).await.status, JobStatus::Cancelled);
     m.cancel_all();
@@ -77,11 +86,16 @@ async fn same_kind_is_busy_and_cancel_works() {
 async fn reindex_needs_custom_and_bad_convert_rejected_upfront() {
     let env = Env::new();
     let (m, _ev) = env.manager();
-    assert_eq!(m.start(JobSpec::Reindex).unwrap_err().kind, ErrorKind::Invalid);
+    assert_eq!(
+        m.start(JobSpec::Reindex).unwrap_err().kind,
+        ErrorKind::Invalid
+    );
     let e = m
         .start(JobSpec::Convert(ConvertSpec {
             input: ConvertInput::File { path: "/x".into() },
-            kind: ConvertKind::PdfCompress { level: "prepress".into() },
+            kind: ConvertKind::PdfCompress {
+                level: "prepress".into(),
+            },
             output_dir: None,
         }))
         .unwrap_err();
@@ -176,7 +190,11 @@ async fn cancel_kills_long_child_quickly() {
     m.cancel(rec.id).unwrap();
     let done = ev.finished(rec.id).await;
     assert_eq!(done.status, JobStatus::Cancelled);
-    assert!(t0.elapsed() < Duration::from_millis(3500), "{:?}", t0.elapsed());
+    assert!(
+        t0.elapsed() < Duration::from_millis(3500),
+        "{:?}",
+        t0.elapsed()
+    );
 }
 
 // ---------- backfill ----------
@@ -204,7 +222,12 @@ fn seed_backfill(env: &Env) {
 }
 
 fn backfill(retry: bool) -> JobSpec {
-    JobSpec::Backfill { days: 30, kinds: vec![], workers: 1, retry_failed: retry }
+    JobSpec::Backfill {
+        days: 30,
+        kinds: vec![],
+        workers: 1,
+        retry_failed: retry,
+    }
 }
 
 #[tokio::test]
@@ -217,7 +240,10 @@ async fn backfill_downloads_skips_and_remembers_failures() {
     assert_eq!(done.status, JobStatus::Succeeded, "{done:?}");
     // Documents first, then newest first; local/skip-listed/old never requested.
     assert_eq!(env.bridge.ids(), ["DOC_OK", "IMG_OK", "GONE"]);
-    assert!(env.bridge.calls.lock().iter().all(|c| c.2), "no_retry always set");
+    assert!(
+        env.bridge.calls.lock().iter().all(|c| c.2),
+        "no_retry always set"
+    );
     let skip = std::fs::read_to_string(&env.paths.backfill_skip).unwrap();
     assert!(skip.contains(&format!("{CHAT}|GONE")) && skip.contains("SKIPPED"));
     let msg = done.message.unwrap();
@@ -266,15 +292,27 @@ async fn backfill_bridge_down_stops_without_poisoning_skip_list() {
 async fn backfill_timeouts_are_not_remembered_and_kinds_filter() {
     let env = Env::new();
     seed_backfill(&env);
-    env.bridge.fail.lock().insert("IMG_OK".into(), AppError::timeout("slow"));
+    env.bridge
+        .fail
+        .lock()
+        .insert("IMG_OK".into(), AppError::timeout("slow"));
     let (m, mut ev) = env.manager();
     let r = m
-        .start(JobSpec::Backfill { days: 30, kinds: vec![MediaKind::Image], workers: 4, retry_failed: false })
+        .start(JobSpec::Backfill {
+            days: 30,
+            kinds: vec![MediaKind::Image],
+            workers: 4,
+            retry_failed: false,
+        })
         .unwrap();
     let done = ev.finished(r.id).await;
     assert_eq!(env.bridge.ids(), ["IMG_OK"]);
     assert!(done.message.unwrap().contains("1 timed out"));
-    assert!(!std::fs::read_to_string(&env.paths.backfill_skip).unwrap().contains("IMG_OK"));
+    assert!(
+        !std::fs::read_to_string(&env.paths.backfill_skip)
+            .unwrap()
+            .contains("IMG_OK")
+    );
 }
 
 #[tokio::test]
@@ -282,9 +320,20 @@ async fn backfill_zero_days_invalid() {
     let env = Env::new();
     let (m, mut ev) = env.manager();
     let r = m
-        .start(JobSpec::Backfill { days: 0, kinds: vec![], workers: 2, retry_failed: false })
+        .start(JobSpec::Backfill {
+            days: 0,
+            kinds: vec![],
+            workers: 2,
+            retry_failed: false,
+        })
         .unwrap();
     let done = ev.finished(r.id).await;
     assert_eq!(done.status, JobStatus::Failed);
-    let _ = JobEvent::Progress(JobProgress { id: 0, done: 0, total: 0, phase: String::new(), message: None });
+    let _ = JobEvent::Progress(JobProgress {
+        id: 0,
+        done: 0,
+        total: 0,
+        phase: String::new(),
+        message: None,
+    });
 }

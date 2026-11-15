@@ -142,7 +142,10 @@ fn build_index(files: Vec<Candidate>, ctl: &JobCtl) -> Result<Index> {
 }
 
 fn find_match<'a>(idx: &'a Index, row: &MediaInfo) -> Option<(&'a Candidate, &'static str)> {
-    if let Some(sha) = row.file_sha256.as_deref().and_then(|s| <[u8; 32]>::try_from(s).ok())
+    if let Some(sha) = row
+        .file_sha256
+        .as_deref()
+        .and_then(|s| <[u8; 32]>::try_from(s).ok())
         && let Some(&i) = idx.by_hash.get(&sha)
     {
         return Some((&idx.files[i], "hash"));
@@ -202,7 +205,9 @@ fn link_all(deps: &JobDeps, extra_dirs: &[String], ctl: &JobCtl) -> Result<Strin
     for d in extra_dirs {
         let p = Path::new(d);
         if !p.is_absolute() {
-            return Err(AppError::invalid(format!("extra folder must be absolute: {d}")));
+            return Err(AppError::invalid(format!(
+                "extra folder must be absolute: {d}"
+            )));
         }
         match fs::canonicalize(p) {
             Ok(real) if real.is_dir() => walk(&real, false, &mut files),
@@ -283,7 +288,11 @@ fn link_all(deps: &JobDeps, extra_dirs: &[String], ctl: &JobCtl) -> Result<Strin
         st.linked,
         st.already,
         st.unmatched,
-        if kinds.is_empty() { "none".to_string() } else { kinds.join(", ") }
+        if kinds.is_empty() {
+            "none".to_string()
+        } else {
+            kinds.join(", ")
+        }
     );
     if st.errors > 0 {
         msg.push_str(&format!("; {} could not be placed", st.errors));
@@ -327,7 +336,10 @@ mod tests {
         big.set_len(MAX_EXTRA_BYTES + 1).unwrap();
         let mut v = Vec::new();
         walk(r, false, &mut v);
-        let names: Vec<_> = v.iter().map(|c| c.path.file_name().unwrap().to_owned()).collect();
+        let names: Vec<_> = v
+            .iter()
+            .map(|c| c.path.file_name().unwrap().to_owned())
+            .collect();
         assert_eq!(names, ["ok.jpg"]);
         let mut v = Vec::new();
         walk(r, true, &mut v);

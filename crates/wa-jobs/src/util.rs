@@ -71,9 +71,14 @@ pub fn canonical_input_file(p: &Path) -> Result<PathBuf> {
     if !fs::metadata(&real)?.is_file() {
         return Err(AppError::invalid("input must be a regular file"));
     }
-    let name = real.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    let name = real
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
     if is_secret_name(name) {
-        return Err(AppError::forbidden("refusing to read a secret or database file"));
+        return Err(AppError::forbidden(
+            "refusing to read a secret or database file",
+        ));
     }
     Ok(real)
 }
