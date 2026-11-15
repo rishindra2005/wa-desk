@@ -131,7 +131,7 @@
               </div>
               <div class="flex items-center gap-2">
                 <span class="min-w-0 flex-1 truncate text-[13px] {c.unread ? 'text-fg' : 'text-muted'}">
-                  {#if c.last_is_from_me}<span class="text-faint">You: </span>{:else if c.is_group && c.last_sender_name}<span class="text-faint">{c.last_sender_name}: </span>{/if}{c.last_preview ?? ""}
+                  {#if c.last_is_from_me}<span class="text-faint">{"You: "}</span>{:else if c.is_group && c.last_sender_name}<span class="text-faint">{c.last_sender_name + ": "}</span>{/if}{c.last_preview ?? ""}
                 </span>
                 {#if c.unread}<span class="h-2.5 w-2.5 shrink-0 rounded-full bg-accent" aria-label="Unread" data-testid="unread-dot"></span>{/if}
               </div>

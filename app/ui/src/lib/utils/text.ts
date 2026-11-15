@@ -155,16 +155,22 @@ export function linkify(text: string): LinkPart[] {
   return out;
 }
 
-/** Up to two grapheme-ish initials, handling emoji/Devanagari names gracefully. */
+/**
+ * Up to two initials. Emoji are ignored unless the name is only emoji;
+ * numbers/JIDs give "#". Devanagari names yield their first base letters.
+ */
 export function initials(name: string): string {
-  const clean = name.replace(/[^\p{L}\p{N}\p{Extended_Pictographic}\s+~]/gu, " ").trim();
-  if (!clean) return "?";
-  if (/^[+~]?\d/.test(clean)) return "#";
-  const words = clean.split(/\s+/).filter(Boolean);
-  const first = (w: string | undefined) => (w ? (Array.from(w)[0] ?? "") : "");
+  const trimmed = name.trim();
+  if (!trimmed) return "?";
+  const letters = trimmed.replace(/[^\p{L}\p{M}\p{N}\s+~]/gu, " ").trim();
+  if (!letters) return Array.from(trimmed)[0] ?? "?";
+  if (/^[+~]?\d/.test(letters)) return "#";
+  const words = letters.split(/\s+/).filter((w) => /\p{L}/u.test(w));
+  if (words.length === 0) return "#";
+  // First letter of a word (combining marks can't stand alone).
+  const first = (w: string | undefined) => (w ? (w.match(/\p{L}/u)?.[0] ?? "") : "");
   const a = first(words[0]);
   const b = words.length > 1 ? first(words[words.length - 1]) : "";
-  // Devanagari combining marks are not letters on their own; keep the base glyph only.
   return (a + b).toUpperCase();
 }
 
