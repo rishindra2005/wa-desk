@@ -307,7 +307,11 @@ impl Engine {
         {
             let mut rate = self.rate.lock();
             let key = (id, m.chat_jid.clone());
-            if rate.cooldowns.get(&key).is_some_and(|&t| now - t < cooldown) {
+            if rate
+                .cooldowns
+                .get(&key)
+                .is_some_and(|&t| now - t < cooldown)
+            {
                 tracing::debug!(rule = id, "rule in cooldown for this chat");
                 return None;
             }
@@ -331,7 +335,12 @@ impl Engine {
             outcomes,
             at: now,
         };
-        tracing::info!(rule = id, dry_run = rule.dry_run, actions = rule.actions.len(), "automation fired");
+        tracing::info!(
+            rule = id,
+            dry_run = rule.dry_run,
+            actions = rule.actions.len(),
+            "automation fired"
+        );
         if let Err(e) = self.store.record_rule_fired(id, now) {
             tracing::warn!(error = %e, "could not record rule firing");
         }
@@ -404,8 +413,16 @@ impl Engine {
                 }
             }
             Action::Notify { title } => {
-                let t = title.clone().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| rule.name.clone());
-                let body = format!("{} in {}: {}", m.sender_name, inc.chat_name, truncate(&m.content, 200));
+                let t = title
+                    .clone()
+                    .filter(|t| !t.trim().is_empty())
+                    .unwrap_or_else(|| rule.name.clone());
+                let body = format!(
+                    "{} in {}: {}",
+                    m.sender_name,
+                    inc.chat_name,
+                    truncate(&m.content, 200)
+                );
                 self.notifier.notify(&t, &body);
                 "notified".into()
             }
@@ -431,7 +448,9 @@ impl Engine {
             && let Some(local) = info.local_path.filter(|p| p.is_file())
         {
             let paths = paths.clone();
-            match tokio::task::spawn_blocking(move || wa_bridge::outbox::stage(&paths, &local)).await {
+            match tokio::task::spawn_blocking(move || wa_bridge::outbox::stage(&paths, &local))
+                .await
+            {
                 Ok(Ok(p)) => media_path = Some(p),
                 Ok(Err(e)) => return self.failed(rule, "forward", &e),
                 Err(_) => return "forward failed: staging crashed".into(),
@@ -468,15 +487,33 @@ impl Engine {
         match self.http.post(url).json(&body).send().await {
             Ok(r) if r.status().is_success() => format!("webhook HTTP {}", r.status().as_u16()),
             Ok(r) if r.status().is_redirection() => {
-                format!("webhook HTTP {} (redirect not followed)", r.status().as_u16())
+                format!(
+                    "webhook HTTP {} (redirect not followed)",
+                    r.status().as_u16()
+                )
             }
             Ok(r) => {
                 let e = AppError::external(format!("HTTP {}", r.status().as_u16()));
                 self.failed(rule, "webhook", &e)
             }
             Err(e) => {
-                let kind = if e.is_timeout() { ErrorKind::Timeout } else { ErrorKind::External };
-                self.failed(rule, "webhook", &AppError::new(kind, if e.is_timeout() { "timed out".to_string() } else { "could not connect".to_string() }))
+                let kind = if e.is_timeout() {
+                    ErrorKind::Timeout
+                } else {
+                    ErrorKind::External
+                };
+                self.failed(
+                    rule,
+                    "webhook",
+                    &AppError::new(
+                        kind,
+                        if e.is_timeout() {
+                            "timed out".to_string()
+                        } else {
+                            "could not connect".to_string()
+                        },
+                    ),
+                )
             }
         }
     }
@@ -488,13 +525,21 @@ mod tests {
 
     #[test]
     fn bucket_refills_over_time() {
-        let mut b = Bucket { cap: 2, tokens: 2.0, last: 0 };
+        let mut b = Bucket {
+            cap: 2,
+            tokens: 2.0,
+            last: 0,
+        };
         assert!(b.take(2, 0));
         assert!(b.take(2, 0));
         assert!(!b.take(2, 0));
         assert!(!b.take(2, 1000), "half a token after 1000 s");
         assert!(b.take(2, 1800));
-        let mut z = Bucket { cap: 0, tokens: 0.0, last: 0 };
+        let mut z = Bucket {
+            cap: 0,
+            tokens: 0.0,
+            last: 0,
+        };
         assert!(!z.take(0, 100_000));
         assert!(!b.take(1, 1800), "lowered cap clamps tokens");
     }

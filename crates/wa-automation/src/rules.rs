@@ -19,8 +19,10 @@ pub const DEFAULT_COOLDOWN: u32 = 600;
 
 // Literal patterns, covered by tests.
 static JID: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(\+?\d{7,15}|[0-9][0-9\-]{4,40}(:\d+)?@(s\.whatsapp\.net|g\.us|lid|c\.us|newsletter))$")
-        .expect("static regex")
+    Regex::new(
+        r"^(\+?\d{7,15}|[0-9][0-9\-]{4,40}(:\d+)?@(s\.whatsapp\.net|g\.us|lid|c\.us|newsletter))$",
+    )
+    .expect("static regex")
 });
 
 /// Compile a rule regex with size limits.
@@ -105,16 +107,21 @@ fn validate_action(a: &Action) -> Result<()> {
                 return Err(AppError::invalid("reply text must not be empty"));
             }
             if text.chars().count() > MAX_REPLY {
-                return Err(AppError::invalid("reply text is longer than 4096 characters"));
+                return Err(AppError::invalid(
+                    "reply text is longer than 4096 characters",
+                ));
             }
         }
         Action::Forward { to_jid } => {
             if !looks_like_jid(to_jid) {
-                return Err(AppError::invalid("forward target must be a phone number or chat id"));
+                return Err(AppError::invalid(
+                    "forward target must be a phone number or chat id",
+                ));
             }
         }
         Action::Webhook { url } => {
-            let u = reqwest::Url::parse(url).map_err(|_| AppError::invalid("webhook URL is not valid"))?;
+            let u = reqwest::Url::parse(url)
+                .map_err(|_| AppError::invalid("webhook URL is not valid"))?;
             if !matches!(u.scheme(), "http" | "https") || u.host_str().is_none() {
                 return Err(AppError::invalid("webhook URL must be http(s)"));
             }
@@ -196,14 +203,33 @@ pub fn check(rule: &Rule, ctx: &MatchCtx<'_>, regex: Option<&Regex>) -> (bool, V
     } else if t.chat_jids.is_empty() {
         push(true, "chat: any direct chat".into());
     } else {
-        let listed = t.chat_jids.iter().any(|j| user_part(j) == user_part(&m.chat_jid));
-        push(listed, format!("chat: {}", if listed { "listed" } else { "not in the rule's chats" }));
+        let listed = t
+            .chat_jids
+            .iter()
+            .any(|j| user_part(j) == user_part(&m.chat_jid));
+        push(
+            listed,
+            format!(
+                "chat: {}",
+                if listed {
+                    "listed"
+                } else {
+                    "not in the rule's chats"
+                }
+            ),
+        );
     }
 
     if !t.senders.is_empty() {
         let s = m.sender_jid.as_deref().map(user_part).unwrap_or_default();
         let hit = !s.is_empty() && t.senders.iter().any(|x| user_part(x) == s);
-        push(hit, format!("sender: {}", if hit { "matches" } else { "not in the list" }));
+        push(
+            hit,
+            format!(
+                "sender: {}",
+                if hit { "matches" } else { "not in the list" }
+            ),
+        );
     }
 
     if !t.keywords.is_empty() {
@@ -219,7 +245,10 @@ pub fn check(rule: &Rule, ctx: &MatchCtx<'_>, regex: Option<&Regex>) -> (bool, V
         match regex {
             Some(r) => {
                 let hit = r.is_match(&m.content);
-                push(hit, format!("regex: {}", if hit { "matches" } else { "no match" }));
+                push(
+                    hit,
+                    format!("regex: {}", if hit { "matches" } else { "no match" }),
+                );
             }
             None => push(false, "regex: invalid".into()),
         }
@@ -228,7 +257,17 @@ pub fn check(rule: &Rule, ctx: &MatchCtx<'_>, regex: Option<&Regex>) -> (bool, V
     if !t.media_kinds.is_empty() {
         let k = m.media.as_ref().map(|x| x.kind);
         let hit = k.is_some_and(|k| t.media_kinds.contains(&k));
-        push(hit, format!("media: {}", if hit { "kind matches" } else { "kind not selected" }));
+        push(
+            hit,
+            format!(
+                "media: {}",
+                if hit {
+                    "kind matches"
+                } else {
+                    "kind not selected"
+                }
+            ),
+        );
     }
 
     if let (Some(a), Some(b)) = (&t.active_from, &t.active_to) {
@@ -241,10 +280,23 @@ pub fn check(rule: &Rule, ctx: &MatchCtx<'_>, regex: Option<&Regex>) -> (bool, V
         }
     }
 
-    let has_reply = rule.actions.iter().any(|a| matches!(a, Action::Reply { .. }));
+    let has_reply = rule
+        .actions
+        .iter()
+        .any(|a| matches!(a, Action::Reply { .. }));
     if ctx.is_group && (t.mention_only || has_reply) {
         let hit = mentions_me(&m.content, ctx.me);
-        push(hit, format!("mention: {}", if hit { "we are @mentioned" } else { "we are not @mentioned" }));
+        push(
+            hit,
+            format!(
+                "mention: {}",
+                if hit {
+                    "we are @mentioned"
+                } else {
+                    "we are not @mentioned"
+                }
+            ),
+        );
     }
     (ok, reasons)
 }
@@ -283,9 +335,13 @@ pub fn render(template: &str, m: &Message, chat_name: &str) -> String {
 /// One-line description of an action (for `planned` / dry-run outcomes).
 pub fn describe(a: &Action, m: &Message, chat_name: &str) -> String {
     match a {
-        Action::Reply { text } => format!("reply \"{}\"", truncate(&render(text, m, chat_name), 80)),
+        Action::Reply { text } => {
+            format!("reply \"{}\"", truncate(&render(text, m, chat_name), 80))
+        }
         Action::DownloadMedia => "download the media".into(),
-        Action::Notify { title } => format!("notify \"{}\"", title.as_deref().unwrap_or("rule name")),
+        Action::Notify { title } => {
+            format!("notify \"{}\"", title.as_deref().unwrap_or("rule name"))
+        }
         Action::Forward { to_jid } => format!("forward to {to_jid}"),
         Action::Tag { label } => format!("tag '{label}'"),
         Action::Webhook { url } => format!("POST webhook {}", url_host(url)),
@@ -361,7 +417,10 @@ mod tests {
         let ts = now.timestamp();
         let h = now.hour();
         assert!(in_window(ts, t(h, 0), t(h, 59)));
-        assert!(in_window(ts, t((h + 1) % 24, 0), t(h, 59)), "wraps midnight");
+        assert!(
+            in_window(ts, t((h + 1) % 24, 0), t(h, 59)),
+            "wraps midnight"
+        );
         assert!(!in_window(ts, t((h + 1) % 24, 0), t((h + 1) % 24, 59)));
     }
 }
