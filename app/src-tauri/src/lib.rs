@@ -144,6 +144,10 @@ fn setup(
     let core = tauri::async_runtime::block_on(AppCore::new(deps)).inspect_err(|e| {
         tracing::error!(error = %e, "startup failed");
     })?;
+    if std::env::var("WA_DESK_READ_ONLY").is_ok_and(|v| v == "1") {
+        tracing::warn!("read-only mode: sends, reactions, receipts and automations are disabled");
+        core.set_read_only(true);
+    }
     app.manage(core.clone());
     let token = app.state::<Shutdown>().token.clone();
     let bg = core.clone();

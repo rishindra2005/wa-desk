@@ -137,6 +137,7 @@ pub struct AppCore {
     emitter: Arc<dyn Emitter>,
     platform: Arc<dyn Platform>,
     automation_paused: AtomicBool,
+    read_only: AtomicBool,
     last_bridge: Mutex<Option<ConnectionState>>,
 }
 
@@ -175,7 +176,16 @@ impl AppCore {
         let em = deps.emitter.clone();
         let on_event: JobEventFn = Arc::new(move |ev| match ev {
             JobEvent::Progress(p) => emit_typed(&*em, events::JOB_PROGRESS, &p),
-            JobEvent::Finished(r) => emit_typed(&*em, events::JOB_FINISHED, &r),
+            JobEvent::Finished(r) => {
+                tracing::info!(
+                    job = r.id,
+                    label = %r.label,
+                    status = ?r.status,
+                    secs = r.finished_at.unwrap_or(r.created_at) - r.created_at,
+                    "job finished"
+                );
+                emit_typed(&*em, events::JOB_FINISHED, &r);
+            }
         });
         let mut jd = JobDeps::new(
             deps.paths.clone(),
@@ -209,6 +219,7 @@ impl AppCore {
             emitter: deps.emitter,
             platform: deps.platform,
             automation_paused: AtomicBool::new(false),
+            read_only: AtomicBool::new(false),
             last_bridge: Mutex::new(None),
         });
         tracing::info!(own_known = has_me, "app core ready");
@@ -298,6 +309,21 @@ impl AppCore {
         }
         tracing::info!(paused, "automation pause toggled");
         Ok(())
+    }
+
+    /// Safety switch (`WA_DESK_READ_ONLY=1`) for running against a copy of the
+    /// data while the live bridge is up: refuses sends, reactions, read
+    /// receipts, downloads and reconnects, and never runs automations.
+    pub fn set_read_only(&self, on: bool) {
+        self.read_only.store(on, Ordering::SeqCst);
+    }
+
+    fn writable(&self) -> Result<()> {
+        if self.read_only.load(Ordering::SeqCst) {
+            Err(AppError::forbidden("wa-desk is running in read-only mode"))
+        } else {
+            Ok(())
+        }
     }
 
     /// Whether automations are paused from the tray.
@@ -416,6 +442,7 @@ impl AppCore {
         if on_disk {
             return Ok(r);
         }
+        self.writable()?;
         tracing::info!(chat = %chat_jid, id = %message_id, "downloading missing media");
         self.bridge
             .download(&chat_jid, &message_id, false)
@@ -551,6 +578,7 @@ impl AppCore {
 
     /// `send_message`.
     pub async fn send_message(&self, req: SendReq) -> Result<SendResult> {
+        self.writable()?;
         let recipient = req.recipient.trim().to_string();
         if recipient.is_empty() {
             return Err(AppError::invalid("Choose who to send the message to"));
@@ -620,6 +648,7 @@ impl AppCore {
 
     /// `react` ("" removes our reaction).
     pub async fn react(&self, req: ReactReq) -> Result<()> {
+        self.writable()?;
         require("chat", &req.chat_jid)?;
         require("message", &req.message_id)?;
         if req.emoji.len() > 64 {
@@ -645,6 +674,7 @@ impl AppCore {
 
     /// `mark_read`: inbound messages newer than the last read marker (≤ 200).
     pub async fn mark_read(&self, chat_jid: String) -> Result<()> {
+        self.writable()?;
         let chat = self.get_chat(chat_jid.clone()).await?;
         if !chat.unread {
             return Ok(());
@@ -698,6 +728,7 @@ impl AppCore {
 
     /// `reconnect`: ask the bridge to reconnect, then return the fresh state.
     pub async fn reconnect(&self) -> Result<ConnectionState> {
+        self.writable()?;
         self.bridge
             .reconnect()
             .await
@@ -943,7 +974,10 @@ impl AppCore {
             },
         );
         let settings = self.get_settings().await.unwrap_or_default();
-        if settings.automation_enabled && !self.automation_paused() {
+        if settings.automation_enabled
+            && !self.automation_paused()
+            && !self.read_only.load(Ordering::SeqCst)
+        {
             self.refresh_engine_identity().await;
             for ev in self.engine().process(&out.new).await {
                 tracing::info!(rule = ev.rule_id, dry_run = ev.dry_run, "automation fired");
