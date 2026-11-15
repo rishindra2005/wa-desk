@@ -6,6 +6,11 @@ export type MessagesQuery = { chat_jid: string,
  */
 before: string | null, 
 /**
+ * Return messages strictly newer than this cursor, ascending (forward paging
+ * after jumping to an old message). Mutually exclusive with `before`.
+ */
+after: string | null, 
+/**
  * 1..=500, default 80.
  */
 limit: number | null, };

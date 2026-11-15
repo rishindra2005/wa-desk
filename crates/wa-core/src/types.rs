@@ -37,7 +37,55 @@ pub enum ChatKind {
     #[default]
     All,
     Direct,
+    /// Ordinary groups (excludes communities' announcement parents).
     Group,
+    Community,
+    Channel,
+    Broadcast,
+}
+
+/// What a chat actually is (for icons, labels and filtering).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ChatType {
+    #[default]
+    Direct,
+    Group,
+    /// Community parent (the community itself).
+    Community,
+    /// WhatsApp channel (`@newsletter`).
+    Channel,
+    /// Broadcast list (`@broadcast`, not status).
+    Broadcast,
+    /// `status@broadcast`.
+    Status,
+}
+
+impl ChatType {
+    /// Best effort from the JID alone (communities need bridge metadata).
+    pub fn from_jid(jid: &str) -> Self {
+        if jid == "status@broadcast" {
+            Self::Status
+        } else if jid.ends_with("@g.us") {
+            Self::Group
+        } else if jid.ends_with("@newsletter") {
+            Self::Channel
+        } else if jid.ends_with("@broadcast") {
+            Self::Broadcast
+        } else {
+            Self::Direct
+        }
+    }
+}
+
+/// Lightweight reference to another chat.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChatRef {
+    pub jid: String,
+    pub name: String,
+    pub chat_type: ChatType,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
@@ -61,16 +109,51 @@ pub struct ChatSummary {
     /// Resolved display name (never empty; falls back to the phone/JID).
     pub name: String,
     pub is_group: bool,
+    pub chat_type: ChatType,
+    /// For groups inside a community: the community.
+    pub parent: Option<ChatRef>,
+    /// `wa-media://localhost/a/<jid>` (404 when the chat has no picture).
+    pub avatar_url: String,
     #[ts(type = "number | null")]
     pub last_message_ts: Option<i64>,
     /// First ~120 chars of the last message, or a media label like "📄 file.pdf".
     pub last_preview: Option<String>,
     pub last_sender_name: Option<String>,
     pub last_is_from_me: bool,
+    /// Delivery status of the last message when it is ours.
+    pub last_status: Option<MessageStatus>,
     pub unread: bool,
 }
 
 // ---------- messages ----------
+
+/// WhatsApp delivery ticks for our own messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum MessageStatus {
+    /// Accepted by the server (single grey tick). Default when no receipt is known.
+    Sent,
+    /// Delivered to the recipient's device (double grey tick).
+    Delivered,
+    /// Read (double blue tick).
+    Read,
+    /// Voice note / video played (blue mic/tick).
+    Played,
+}
+
+impl MessageStatus {
+    /// Map a stored bridge receipt status.
+    pub fn from_db(s: &str) -> Option<Self> {
+        match s {
+            "sent" | "server" => Some(Self::Sent),
+            "delivered" => Some(Self::Delivered),
+            "read" => Some(Self::Read),
+            "played" => Some(Self::Played),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -172,6 +255,10 @@ pub struct Message {
     pub reactions: Vec<Reaction>,
     /// Revoked ("This message was deleted").
     pub deleted: bool,
+    /// Delivery status (own messages only; null for inbound).
+    pub status: Option<MessageStatus>,
+    /// Bookmarked locally (wa-desk "starred").
+    pub starred: bool,
 }
 
 /// Opaque cursor for paging a thread backwards: encoded "<ts>:<rowid>".
@@ -183,6 +270,9 @@ pub struct MessagesQuery {
     pub chat_jid: String,
     /// Return messages strictly older than this cursor (null = newest page).
     pub before: Option<MsgCursor>,
+    /// Return messages strictly newer than this cursor, ascending (forward paging
+    /// after jumping to an old message). Mutually exclusive with `before`.
+    pub after: Option<MsgCursor>,
     /// 1..=500, default 80.
     pub limit: Option<u32>,
 }
@@ -256,6 +346,8 @@ pub struct MediaItem {
     pub message_id: String,
     pub chat_jid: String,
     pub chat_name: String,
+    /// Normalised sender JID (null for own messages).
+    pub sender_jid: Option<String>,
     pub sender_name: String,
     pub is_from_me: bool,
     #[ts(type = "number")]
@@ -678,6 +770,158 @@ pub struct Issue {
     pub status: IssueStatus,
 }
 
+// ---------- profiles ----------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BusinessInfo {
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub email: Option<String>,
+    pub website: Option<String>,
+    pub address: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ContactProfile {
+    pub jid: String,
+    pub name: String,
+    /// Name the person set for themselves.
+    pub push_name: Option<String>,
+    /// "+91 98765 43210" style, when known.
+    pub phone: Option<String>,
+    /// "About" text.
+    pub about: Option<String>,
+    pub avatar_url: String,
+    pub is_me: bool,
+    pub business: Option<BusinessInfo>,
+    pub common_groups: Vec<ChatRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Participant {
+    pub jid: String,
+    pub name: String,
+    pub phone: Option<String>,
+    pub is_admin: bool,
+    pub is_super_admin: bool,
+    pub is_me: bool,
+    pub avatar_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GroupProfile {
+    pub jid: String,
+    pub name: String,
+    pub chat_type: ChatType,
+    pub description: Option<String>,
+    #[ts(type = "number | null")]
+    pub created_at: Option<i64>,
+    pub created_by: Option<String>,
+    pub participants: Vec<Participant>,
+    pub participant_count: u32,
+    /// Community this group belongs to.
+    pub parent: Option<ChatRef>,
+    /// Groups of a community (only for communities).
+    pub sub_groups: Vec<ChatRef>,
+    /// Only admins can send.
+    pub announce_only: bool,
+    /// Only admins can edit info.
+    pub locked: bool,
+    pub avatar_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChannelProfile {
+    pub jid: String,
+    pub name: String,
+    pub description: Option<String>,
+    #[ts(type = "number | null")]
+    pub subscribers: Option<u64>,
+    pub verified: bool,
+    pub avatar_url: String,
+}
+
+/// Result of `get_profile`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export)]
+pub enum Profile {
+    Contact(ContactProfile),
+    Group(GroupProfile),
+    Channel(ChannelProfile),
+}
+
+/// Per-chat counts for the info panel.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChatStats {
+    #[ts(type = "number")]
+    pub messages: u64,
+    #[ts(type = "number")]
+    pub media: u64,
+    #[ts(type = "number")]
+    pub docs: u64,
+    #[ts(type = "number")]
+    pub links: u64,
+    #[ts(type = "number")]
+    pub starred: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LinkItem {
+    pub url: String,
+    pub message_id: String,
+    pub chat_jid: String,
+    pub sender_name: String,
+    #[ts(type = "number")]
+    pub ts: i64,
+    /// Message text around the link (≤ 200 chars).
+    pub context: String,
+}
+
+// ---------- export / forward ----------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ExportFormat {
+    Html,
+    Txt,
+    Json,
+    Pdf,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ExportReq {
+    pub chat_jid: String,
+    pub format: ExportFormat,
+    /// Only these messages (selection export); empty = whole chat / range.
+    #[serde(default)]
+    pub message_ids: Vec<String>,
+    #[ts(type = "number | null")]
+    pub after: Option<i64>,
+    #[ts(type = "number | null")]
+    pub before: Option<i64>,
+    /// Copy locally available media next to the export (HTML) and link it.
+    pub include_media: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ForwardReq {
+    pub from_chat: String,
+    pub message_ids: Vec<String>,
+    /// Target chat JIDs (≤ 5 per call, like WhatsApp).
+    pub to: Vec<String>,
+}
+
 // ---------- settings ----------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -838,6 +1082,38 @@ mod tests {
             BridgeState::LoggedOut
         );
         assert_eq!(BridgeState::from_bridge("weird"), BridgeState::Error);
+    }
+
+    #[test]
+    fn chat_type_from_jid() {
+        assert_eq!(ChatType::from_jid("status@broadcast"), ChatType::Status);
+        assert_eq!(ChatType::from_jid("1234@broadcast"), ChatType::Broadcast);
+        assert_eq!(ChatType::from_jid("1203@g.us"), ChatType::Group);
+        assert_eq!(ChatType::from_jid("1203@newsletter"), ChatType::Channel);
+        assert_eq!(ChatType::from_jid("9198@s.whatsapp.net"), ChatType::Direct);
+        assert_eq!(ChatType::from_jid("2222@lid"), ChatType::Direct);
+    }
+
+    #[test]
+    fn message_status_order_and_mapping() {
+        assert!(MessageStatus::Sent < MessageStatus::Delivered);
+        assert!(MessageStatus::Delivered < MessageStatus::Read);
+        assert!(MessageStatus::Read < MessageStatus::Played);
+        assert_eq!(MessageStatus::from_db("read"), Some(MessageStatus::Read));
+        assert_eq!(MessageStatus::from_db("bogus"), None);
+    }
+
+    #[test]
+    fn profile_is_tagged() {
+        let p = Profile::Channel(ChannelProfile {
+            jid: "1@newsletter".into(),
+            name: "News".into(),
+            description: None,
+            subscribers: Some(5),
+            verified: true,
+            avatar_url: String::new(),
+        });
+        assert_eq!(serde_json::to_value(&p).unwrap()["type"], "channel");
     }
 
     #[test]

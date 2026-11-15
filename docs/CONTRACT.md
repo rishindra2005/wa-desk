@@ -13,7 +13,7 @@ Calling conventions:
 | `overview` | none | `Overview` |
 | `list_chats` | `{ query: ChatQuery }` | `Page<ChatSummary>` |
 | `get_chat` | `{ jid: string }` | `ChatSummary` |
-| `get_messages` | `{ query: MessagesQuery }` | `Page<Message>`: newest page first, items in **ascending** time order, and `next_cursor` pages **older** |
+| `get_messages` | `{ query: MessagesQuery }` | `Page<Message>`: newest page first, items in **ascending** time order, and `next_cursor` pages **older**. With `after`, returns the next newer page (ascending); `next_cursor` then pages **newer** and is `null` at the newest message |
 | `get_message_context` | `{ chatJid, messageId, radius: number }` | `Message[]` (ascending, includes the target) |
 | `search` | `{ query: SearchQuery }` | `SearchResults` |
 | `list_media` | `{ query: MediaQuery }` | `Page<MediaItem>` (newest first) |
@@ -23,6 +23,15 @@ Calling conventions:
 | `save_media_as` | `{ chatJid, messageId, dest: string }` | `string`: the saved path (`dest` comes from the save dialog) |
 | `open_path` | `{ path: string }` | `void`: opens an exported or converted file; only files inside the exports or cache folders (`forbidden` otherwise) |
 | `reveal_path` | `{ path: string }` | `void`: shows that file in the file manager (same scope) |
+| `get_profile` | `{ jid: string }` | `Profile` (contact, group/community, or channel). Live from the bridge with a 10 min cache; falls back to local data when the bridge is down |
+| `chat_stats` | `{ chatJid }` | `ChatStats` |
+| `list_links` | `{ chatJid: string \| null, cursor: string \| null, limit: number }` | `Page<LinkItem>` (newest first) |
+| `set_starred` | `{ chatJid, messageIds: string[], starred: boolean }` | `void` |
+| `list_starred` | `{ chatJid: string \| null, cursor: string \| null, limit: number }` | `Page<SearchHit>` (newest first, `highlights` empty) |
+| `export_chat` | `{ req: ExportReq }` | `string`: path of the export (folder for HTML with media, else a file) in the exports folder |
+| `forward_messages` | `{ req: ForwardReq }` | `SendResult[]` (one per message × target; never more than 5 targets) |
+| `copy_messages_text` | `{ chatJid, messageIds: string[] }` | `string`: WhatsApp-style "[time] Name: text" lines for the clipboard |
+| `refresh_chat_names` | none | `number`: how many chat names were fixed from bridge metadata (groups, communities, channels) |
 | `send_message` | `{ req: SendReq }` | `SendResult` |
 | `react` | `{ req: ReactReq }` | `void` |
 | `mark_read` | `{ chatJid }` | `void` |
@@ -66,6 +75,7 @@ The backend returns complete URLs. The UI uses them as-is in `src`/`href`/`fetch
 - `wa-media://localhost/m/<urlenc chat_jid>/<urlenc message_id>`: the original file. Supports HTTP `Range` (video/audio seeking) and sets `Content-Type`.
 - `wa-media://localhost/t/<chat>/<id>`: a 256 px thumbnail, generated on demand (images, video frames, PDF first page). Returns 404 if none is available.
 - `wa-media://localhost/p/<chat>/<id>`: the preview PDF for office documents, cached after `preview_doc`.
+- `wa-media://localhost/a/<urlenc jid>`: profile picture (contact, group, community or channel), cached; 404 when there is none (show initials). Add `?full=1` for the full-size picture.
 - `wa-media://localhost/x/<urlenc absolute path>`: an exported or converted output file. Only files inside the exports or cache folders are served.
 
 Paths are always resolved, canonicalised and scope-checked in Rust. `.bridge-token` and `*.db*` files are never served.
