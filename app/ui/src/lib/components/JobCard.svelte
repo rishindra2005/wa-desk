@@ -61,7 +61,7 @@
     </p>
   {:else if !compact}
     <p class="mt-1 text-[11px] text-muted">
-      {timeAgo(job.finished_at ?? job.created_at)}{#if duration !== null} · took {formatDuration(duration)}{/if}{#if job.message} · {job.message}{/if}
+      {[timeAgo(job.finished_at ?? job.created_at), duration !== null ? `took ${formatDuration(duration)}` : null, job.message].filter(Boolean).join(" · ")}
     </p>
   {/if}
   {#if job.error}<p class="mt-1.5 rounded-md bg-danger-soft px-2 py-1 font-mono text-[11px] text-danger">{job.error}</p>{/if}

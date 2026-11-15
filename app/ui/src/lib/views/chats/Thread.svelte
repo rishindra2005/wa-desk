@@ -303,6 +303,7 @@
         items={rows}
         getKey={(r) => r.key}
         estimate={estimate}
+        canAnchor={(r) => r.kind === "msg"}
         class="h-full"
         stickToBottom
         startAtBottom

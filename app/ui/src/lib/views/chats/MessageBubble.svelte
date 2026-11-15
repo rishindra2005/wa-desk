@@ -66,7 +66,7 @@
         <p class="mb-0.5 text-[12.5px] font-semibold" style="color:{nameColor}" data-testid="sender-name">{displayName(m.sender_name, m.sender_jid)}</p>
       {/if}
       {#if m.deleted}
-        <p class="flex items-center gap-1.5 italic text-muted" data-testid="deleted"><Ban size={14} /> This message was deleted</p>
+        <p class="flex items-center gap-1.5 pr-10 italic text-muted" data-testid="deleted"><Ban size={14} /> This message was deleted</p>
       {:else}
         {#if m.quoted}
           <button

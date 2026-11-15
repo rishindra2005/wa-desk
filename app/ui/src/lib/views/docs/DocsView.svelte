@@ -10,7 +10,7 @@
   import DocIcon from "../../components/DocIcon.svelte";
   import DocPreview from "../../components/DocPreview.svelte";
   import { downloadMedia, openExternal, saveMedia } from "../../media";
-  import { formatSize, shortDate, formatCount } from "../../utils/format";
+  import { formatSize, shortDate, formatCount, displayName } from "../../utils/format";
   import { docBucket } from "../../utils/text";
   import { debounce } from "../../utils/misc";
   import { app } from "../../state/app.svelte";
@@ -141,7 +141,7 @@
             <button class="flex h-11 w-full items-center gap-3 border-b border-border px-5 text-left text-[13px] {isSel ? 'bg-accent-soft' : 'hover:bg-surface-2'}" role="row" aria-selected={isSel} onclick={() => (selected = d)} data-testid="doc-row">
               <span class="flex min-w-0 flex-[3] items-center gap-2" role="cell"><DocIcon filename={d.media.filename} mime={d.media.mime} size={24} /><span class="truncate">{d.media.filename}</span></span>
               <span class="flex-[2] truncate text-muted" role="cell">{d.chat_name}</span>
-              <span class="flex-[1.5] truncate text-muted" role="cell">{d.is_from_me ? "You" : d.sender_name}</span>
+              <span class="flex-[1.5] truncate text-muted" role="cell">{d.is_from_me ? "You" : displayName(d.sender_name)}</span>
               <span class="w-28 text-muted" role="cell">{shortDate(d.ts)}</span>
               <span class="w-20 text-right tabular-nums text-muted" role="cell">{formatSize(d.media.size)}</span>
               <span class="w-24" role="cell">

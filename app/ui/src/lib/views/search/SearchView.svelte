@@ -213,7 +213,7 @@
               <div class="min-w-0 flex-1">
                 <div class="flex items-baseline gap-2 text-xs">
                   <span class="truncate font-semibold text-fg">{h.chat_name}</span>
-                  <span class="truncate text-muted">{h.message.is_from_me ? "You" : displayName(h.message.sender_name, h.message.sender_jid)}</span>
+                  {#if h.message.is_from_me || h.message.sender_name !== h.chat_name}<span class="truncate text-muted">{h.message.is_from_me ? "You" : displayName(h.message.sender_name, h.message.sender_jid)}</span>{/if}
                   <span class="ml-auto shrink-0 text-faint">{dateTime(h.message.ts)}</span>
                 </div>
                 <p class="mt-0.5 line-clamp-2 text-[13px]" dir="auto" data-testid="hit-snippet">

@@ -71,9 +71,10 @@
   const items = $derived.by(() => {
     const t = q.trim().toLowerCase();
     const out: Cmd[] = chats.map((c) => ({ id: `chat:${c.jid}`, label: c.name, group: "Chats", chat: c, run: () => app.openChat(c.jid) }));
-    if (t) out.push({ id: "search", label: `Search messages for “${q.trim()}”`, group: "Search", run: () => app.openSearch(q.trim()) });
     const words = t.split(/\s+/).filter(Boolean);
     out.push(...staticCmds.filter((c) => words.every((w) => `${c.group} ${c.label}`.toLowerCase().includes(w))));
+    // Full-text search is the fallback, after exact chat/command matches.
+    if (t) out.push({ id: "search", label: `Search messages for “${q.trim()}”`, group: "Search", run: () => app.openSearch(q.trim()) });
     return out;
   });
 
@@ -127,6 +128,7 @@
             onmouseenter={() => (active = i)}
             onclick={() => exec(c)}
             data-testid="palette-item"
+            data-group={c.group}
           >
             {#if c.chat}<Avatar name={c.chat.name} id={c.chat.jid} size={22} group={c.chat.is_group} />{:else if c.id === "run:reconnect"}<RefreshCw size={15} />{:else}<Icon size={15} />{/if}
             <span class="min-w-0 flex-1 truncate">{c.label}</span>

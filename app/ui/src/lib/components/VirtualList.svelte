@@ -23,6 +23,8 @@
     onNearBottom?: () => void;
     onScroll?: (atBottom: boolean) => void;
     nearPx?: number;
+    /** Rows usable as scroll anchors (default: all). Unstable rows like day separators should return false. */
+    canAnchor?: (item: T) => boolean;
     class?: string;
     innerClass?: string;
     role?: string;
@@ -43,6 +45,7 @@
     onNearBottom,
     onScroll,
     nearPx = 300,
+    canAnchor,
     class: cls = "",
     innerClass = "",
     role = "list",
@@ -110,7 +113,10 @@
   function recordAnchor() {
     if (!viewport || items.length === 0) return;
     const st = viewport.scrollTop;
-    const i = findIndex(st);
+    let i = findIndex(st);
+    if (canAnchor) {
+      while (i < items.length - 1 && !canAnchor(items[i] as T)) i++;
+    }
     const k = keys[i];
     if (k !== undefined) anchor = { key: k, delta: st - (offsets[i] ?? 0) };
     atBottom = viewport.scrollHeight - st - viewport.clientHeight < 32;

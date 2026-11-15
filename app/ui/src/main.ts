@@ -7,7 +7,7 @@ async function boot() {
   if (!("__TAURI_INTERNALS__" in window)) {
     const { installMock } = await import("./lib/mock/install");
     const params = new URLSearchParams(location.search);
-    installMock({ quiet: params.has("quiet") });
+    installMock({ quiet: params.has("quiet"), speed: params.has("fast") ? 4 : 1 });
   }
   // Apply the last theme before first paint to avoid a flash.
   try {
