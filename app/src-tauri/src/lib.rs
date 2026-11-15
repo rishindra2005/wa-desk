@@ -1,6 +1,9 @@
 //! wa-desk Tauri shell. Integration (commands, protocol, tray, watcher) is
 //! owned by the integrator; see AGENTS.md.
 
+pub mod media_url;
+pub mod range;
+
 /// Work around blank/black WebKitGTK windows on NVIDIA + Wayland. Must run
 /// before any GTK/WebKit initialisation, i.e. before the Tauri builder.
 pub fn apply_platform_env() {
