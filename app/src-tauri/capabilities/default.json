@@ -12,9 +12,6 @@
     "dialog:allow-ask",
     "dialog:allow-confirm",
     "notification:default",
-    "opener:allow-open-url",
-    "autostart:allow-enable",
-    "autostart:allow-disable",
-    "autostart:allow-is-enabled"
+    "opener:allow-open-url"
   ]
 }

@@ -34,7 +34,11 @@ tracing.workspace = true
 parking_lot.workspace = true
 percent-encoding.workspace = true
 mime_guess.workspace = true
+tokio-util.workspace = true
+async-trait.workspace = true
 
 [dev-dependencies]
 wa-testkit.workspace = true
 tempfile.workspace = true
+axum.workspace = true
+rusqlite.workspace = true
