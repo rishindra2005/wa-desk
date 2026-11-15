@@ -20,6 +20,8 @@ hex.workspace = true
 regex.workspace = true
 chrono.workspace = true
 parking_lot.workspace = true
+dirs.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+wa-testkit.workspace = true
