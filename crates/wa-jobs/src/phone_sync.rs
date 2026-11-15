@@ -121,7 +121,9 @@ pub async fn run(deps: &JobDeps, ctl: &Arc<JobCtl>) -> Result<String> {
                     last_err = None;
                     break;
                 }
-                Err(e) if e.kind == ErrorKind::Cancelled => return Err(e),
+                Err(e) if e.kind == ErrorKind::Cancelled || e.message.ends_with("is not installed") => {
+                    return Err(e);
+                }
                 Err(e) => {
                     if !phone.mount.exists() {
                         return Err(disconnected());

@@ -24,5 +24,6 @@ percent-encoding.workspace = true
 nix = { workspace = true, features = ["signal", "process"] }
 
 [dev-dependencies]
+rusqlite.workspace = true
 tempfile.workspace = true
 wa-testkit.workspace = true
