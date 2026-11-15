@@ -72,7 +72,9 @@ async fn send(State(m): State<Mock>, axum::Json(body): axum::Json<Value>) -> Res
             .into_response(),
         "json403" => (
             StatusCode::FORBIDDEN,
-            axum::Json(json!({"success": false, "message": "media_path rejected: not under outbox"})),
+            axum::Json(
+                json!({"success": false, "message": "media_path rejected: not under outbox"}),
+            ),
         )
             .into_response(),
         "soft" => axum::Json(json!({"success": false, "message": "Not connected"})).into_response(),
@@ -304,7 +306,10 @@ async fn send_403_json_and_soft_failure() {
         })
         .await
         .unwrap_err();
-    assert_eq!((e.kind, e.message.as_str()), (ErrorKind::External, "Not connected"));
+    assert_eq!(
+        (e.kind, e.message.as_str()),
+        (ErrorKind::External, "Not connected")
+    );
 }
 
 #[tokio::test]
@@ -352,7 +357,10 @@ async fn download_success_and_failures() {
     assert_eq!(d.path, std::path::PathBuf::from("/store/x/M1.jpg"));
     assert_eq!(d.filename, "M1.jpg");
     let e = c.download("c", "gone", true).await.unwrap_err();
-    assert_eq!((e.kind, e.message.as_str()), (ErrorKind::External, "media expired"));
+    assert_eq!(
+        (e.kind, e.message.as_str()),
+        (ErrorKind::External, "media expired")
+    );
     let e = c.download("c", "down", true).await.unwrap_err();
     assert_eq!(e.kind, ErrorKind::BridgeDown);
 }
@@ -391,9 +399,13 @@ async fn react_and_mark_read_bodies() {
     assert_eq!(b["emoji"], "👍");
     assert_eq!(b["sender_jid"], "91@s.whatsapp.net");
     assert_eq!(b["from_me"], false);
-    c.mark_read("g@g.us", &["M1".into(), "M2".into()], Some("91@s.whatsapp.net"))
-        .await
-        .unwrap();
+    c.mark_read(
+        "g@g.us",
+        &["M1".into(), "M2".into()],
+        Some("91@s.whatsapp.net"),
+    )
+    .await
+    .unwrap();
     let b = h.mock.last_body.lock().clone();
     assert_eq!(b["message_ids"][1], "M2");
     // Empty id list is a no-op, not a bridge 400.
@@ -408,8 +420,12 @@ async fn refused_port_is_bridge_down_and_unreachable() {
     let dir = tempfile::tempdir().unwrap();
     let tf = dir.path().join(".bridge-token");
     std::fs::write(&tf, TOKEN_A).unwrap();
-    let c = BridgeClient::with_timeouts(&format!("http://127.0.0.1:{port}"), &tf, Timeouts::default())
-        .unwrap();
+    let c = BridgeClient::with_timeouts(
+        &format!("http://127.0.0.1:{port}"),
+        &tf,
+        Timeouts::default(),
+    )
+    .unwrap();
     assert_eq!(c.reconnect().await.unwrap_err().kind, ErrorKind::BridgeDown);
     let s = c.connection().await;
     assert_eq!(s.state, BridgeState::Unreachable);
@@ -427,8 +443,14 @@ async fn missing_token_file_is_auth() {
 
 #[test]
 fn rejects_non_loopback_paths_config() {
-    let mut p = wa_core::config::Paths::under_root(std::path::Path::new("/tmp/x"), "http://10.0.0.1:8080".into());
-    assert_eq!(BridgeClient::new(&p).unwrap_err().kind, ErrorKind::Forbidden);
+    let mut p = wa_core::config::Paths::under_root(
+        std::path::Path::new("/tmp/x"),
+        "http://10.0.0.1:8080".into(),
+    );
+    assert_eq!(
+        BridgeClient::new(&p).unwrap_err().kind,
+        ErrorKind::Forbidden
+    );
     p.bridge_url = "http://127.0.0.1:8080".into();
     assert!(BridgeClient::new(&p).is_ok());
 }

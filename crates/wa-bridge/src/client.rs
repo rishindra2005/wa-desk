@@ -69,7 +69,9 @@ impl BridgeClient {
             .connect_timeout(timeouts.connect)
             .timeout(timeouts.default)
             .build()
-            .map_err(|e| AppError::internal("could not build HTTP client").with_detail(e.to_string()))?;
+            .map_err(|e| {
+                AppError::internal("could not build HTTP client").with_detail(e.to_string())
+            })?;
         Ok(Self {
             http,
             base,
@@ -158,7 +160,9 @@ fn loopback_base(raw: &str) -> Result<String> {
     let host = match url.host() {
         Some(url::Host::Ipv4(ip)) if ip == std::net::Ipv4Addr::LOCALHOST => "127.0.0.1".to_string(),
         Some(url::Host::Ipv6(ip)) if ip == std::net::Ipv6Addr::LOCALHOST => "[::1]".to_string(),
-        Some(url::Host::Domain(d)) if d.eq_ignore_ascii_case("localhost") => "localhost".to_string(),
+        Some(url::Host::Domain(d)) if d.eq_ignore_ascii_case("localhost") => {
+            "localhost".to_string()
+        }
         _ => {
             return Err(AppError::forbidden(
                 "bridge URL must point at this machine (127.0.0.1, localhost or [::1])",
@@ -231,9 +235,7 @@ fn interpret(status: StatusCode, text: &str, token: &str) -> Result<Value> {
         StatusCode::UNAUTHORIZED => AppError::auth("The bridge rejected wa-desk's access token"),
         StatusCode::FORBIDDEN => AppError::forbidden(with("The bridge refused the request")),
         StatusCode::NOT_FOUND => AppError::not_found(with("Not found on the bridge")),
-        StatusCode::SERVICE_UNAVAILABLE => {
-            AppError::bridge_down(with("WhatsApp is not connected"))
-        }
+        StatusCode::SERVICE_UNAVAILABLE => AppError::bridge_down(with("WhatsApp is not connected")),
         StatusCode::GATEWAY_TIMEOUT | StatusCode::REQUEST_TIMEOUT => {
             AppError::timeout(with("The bridge timed out"))
         }
@@ -286,11 +288,13 @@ fn parse_connection(v: Value) -> ConnectionState {
         .as_deref()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|d| d.timestamp());
-    let last_error = raw.last_error.map(|e| match (e.message.is_empty(), e.code.is_empty()) {
-        (false, false) => format!("{} ({})", e.message, e.code),
-        (false, true) => e.message,
-        _ => e.code,
-    });
+    let last_error = raw
+        .last_error
+        .map(|e| match (e.message.is_empty(), e.code.is_empty()) {
+            (false, false) => format!("{} ({})", e.message, e.code),
+            (false, true) => e.message,
+            _ => e.code,
+        });
     ConnectionState {
         state: BridgeState::from_bridge(&raw.state),
         connected: raw.connected,
@@ -377,7 +381,12 @@ impl BridgeApi for BridgeClient {
             "mentions": req.mentions,
         });
         let v = self
-            .request(Method::POST, "/api/send", Some(&body), self.timeouts.download)
+            .request(
+                Method::POST,
+                "/api/send",
+                Some(&body),
+                self.timeouts.download,
+            )
             .await?;
         Ok(json_message(&v).unwrap_or_else(|| "sent".into()))
     }
@@ -397,9 +406,14 @@ impl BridgeApi for BridgeClient {
             "from_me": from_me,
             "sender_jid": sender_jid.unwrap_or_default(),
         });
-        self.request(Method::POST, "/api/react", Some(&body), self.timeouts.default)
-            .await
-            .map(|_| ())
+        self.request(
+            Method::POST,
+            "/api/react",
+            Some(&body),
+            self.timeouts.default,
+        )
+        .await
+        .map(|_| ())
     }
 
     async fn download(
@@ -475,7 +489,10 @@ mod tests {
             loopback_base("http://LOCALHOST:9").unwrap(),
             "http://localhost:9"
         );
-        assert_eq!(loopback_base("http://[::1]:8080").unwrap(), "http://[::1]:8080");
+        assert_eq!(
+            loopback_base("http://[::1]:8080").unwrap(),
+            "http://[::1]:8080"
+        );
         for bad in [
             "http://192.168.1.2:8080",
             "http://127.0.0.2:8080",
@@ -502,7 +519,8 @@ mod tests {
         assert_eq!(k(503, "{\"success\":false}"), ErrorKind::BridgeDown);
         assert_eq!(k(500, "boom"), ErrorKind::External);
         assert_eq!(k(400, "Invalid request format"), ErrorKind::External);
-        let e = interpret(StatusCode::OK, r#"{"success":false,"message":"nope"}"#, "t").unwrap_err();
+        let e =
+            interpret(StatusCode::OK, r#"{"success":false,"message":"nope"}"#, "t").unwrap_err();
         assert_eq!((e.kind, e.message.as_str()), (ErrorKind::External, "nope"));
         assert_eq!(interpret(StatusCode::OK, "", "t").unwrap(), Value::Null);
         assert!(interpret(StatusCode::OK, "<html>", "t").is_err());
@@ -518,8 +536,12 @@ mod tests {
         .unwrap_err();
         assert_eq!(e.kind, ErrorKind::Forbidden);
         assert!(e.message.contains("media_path rejected"), "{e:?}");
-        let e = interpret(StatusCode::INTERNAL_SERVER_ERROR, r#"{"error":"send failed"}"#, "t")
-            .unwrap_err();
+        let e = interpret(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            r#"{"error":"send failed"}"#,
+            "t",
+        )
+        .unwrap_err();
         assert!(e.message.contains("send failed"));
     }
 
@@ -537,7 +559,9 @@ mod tests {
         let s = parse_connection(json!({"weird": 1}));
         assert_eq!(s.state, BridgeState::Error);
         assert!(s.qr_svg.is_none() && s.last_error.is_none());
-        let s = parse_connection(json!({"state":"connected","connected":true,"qrCode":null,"lastError":null}));
+        let s = parse_connection(
+            json!({"state":"connected","connected":true,"qrCode":null,"lastError":null}),
+        );
         assert!(s.connected && s.qr_svg.is_none());
     }
 
@@ -546,7 +570,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tf = dir.path().join(".bridge-token");
         std::fs::write(&tf, "secret-token-value\n").unwrap();
-        let c = BridgeClient::with_timeouts("http://127.0.0.1:1", &tf, Timeouts::default()).unwrap();
+        let c =
+            BridgeClient::with_timeouts("http://127.0.0.1:1", &tf, Timeouts::default()).unwrap();
         assert_eq!(c.token(false).unwrap(), "secret-token-value");
         assert!(!format!("{c:?}").contains("secret"));
     }
@@ -556,7 +581,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tf = dir.path().join(".bridge-token");
         std::fs::write(&tf, "abc\r\n").unwrap();
-        let c = BridgeClient::with_timeouts("http://127.0.0.1:1", &tf, Timeouts::default()).unwrap();
+        let c =
+            BridgeClient::with_timeouts("http://127.0.0.1:1", &tf, Timeouts::default()).unwrap();
         assert_eq!(c.token(true).unwrap(), "abc");
         std::fs::write(&tf, " \n").unwrap();
         assert_eq!(c.token(true).unwrap_err().kind, ErrorKind::Auth);

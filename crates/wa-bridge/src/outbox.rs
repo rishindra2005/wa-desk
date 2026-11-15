@@ -20,10 +20,7 @@ pub const MAX_STAGE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 fn looks_like_db(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
-    n.ends_with(".db")
-        || n.contains(".db-")
-        || n.ends_with(".sqlite")
-        || n.ends_with(".sqlite3")
+    n.ends_with(".db") || n.contains(".db-") || n.ends_with(".sqlite") || n.ends_with(".sqlite3")
 }
 
 /// Validate `src` and copy it into a fresh outbox subdirectory. Returns the staged path.
@@ -150,7 +147,11 @@ mod tests {
         assert_eq!(out.file_name().unwrap(), "Report (final).pdf");
         assert_eq!(fs::read(&out).unwrap(), b"%PDF-1.4");
         let fmode = fs::metadata(&out).unwrap().permissions().mode() & 0o777;
-        let dmode = fs::metadata(out.parent().unwrap()).unwrap().permissions().mode() & 0o777;
+        let dmode = fs::metadata(out.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
         assert_eq!((fmode, dmode), (0o600, 0o700));
         // Two stagings of the same file never collide.
         let out2 = stage(&p, &src).unwrap();
@@ -179,10 +180,17 @@ mod tests {
         let sub = d.path().join("sub");
         fs::create_dir(&sub).unwrap();
         symlink(&sub, d.path().join("dirlink")).unwrap();
-        assert_eq!(k(&d.path().join("dirlink")), ErrorKind::Invalid, "symlink to dir");
+        assert_eq!(
+            k(&d.path().join("dirlink")),
+            ErrorKind::Invalid,
+            "symlink to dir"
+        );
         assert_eq!(k(Path::new("/dev/null")), ErrorKind::Invalid, "device");
         let fifo = d.path().join("pipe");
-        let st = std::process::Command::new("mkfifo").arg(&fifo).status().unwrap();
+        let st = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
         assert!(st.success());
         assert_eq!(k(&fifo), ErrorKind::Invalid, "fifo");
         fs::write(d.path().join(".bridge-token"), b"t").unwrap();
@@ -224,7 +232,10 @@ mod tests {
         fs::write(&src, b"x").unwrap();
         let staged = stage(&p, &src).unwrap();
         fs::create_dir_all(p.outbox.join("keep-me")).unwrap();
-        assert_eq!(cleanup_older_than(&p, Duration::from_secs(3600)).unwrap(), 0);
+        assert_eq!(
+            cleanup_older_than(&p, Duration::from_secs(3600)).unwrap(),
+            0
+        );
         assert!(staged.exists());
         assert_eq!(cleanup_older_than(&p, Duration::ZERO).unwrap(), 1);
         assert!(!staged.exists());
