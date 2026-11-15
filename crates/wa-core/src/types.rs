@@ -1,0 +1,849 @@
+//! Domain types shared by every crate and exported to TypeScript (ts-rs).
+//!
+//! Conventions:
+//! - Times are Unix **seconds** (UTC) as `i64`, exported to TS as `number`.
+//! - Optional values serialise as `null`.
+//! - Enums serialise snake_case; tagged unions use `{"type": "...", ...}`.
+//! - Paths never leave Rust except as `wa-media://` URLs (see `MediaRef::url`).
+
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
+
+// ---------- paging ----------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Page<T> {
+    pub items: Vec<T>,
+    /// Opaque cursor for the next page; `null` when exhausted.
+    pub next_cursor: Option<String>,
+}
+
+impl<T> Page<T> {
+    pub fn empty() -> Self {
+        Self {
+            items: Vec::new(),
+            next_cursor: None,
+        }
+    }
+}
+
+// ---------- chats ----------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ChatKind {
+    #[default]
+    All,
+    Direct,
+    Group,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChatQuery {
+    /// Case-insensitive substring on resolved name or JID.
+    pub filter: Option<String>,
+    #[serde(default)]
+    pub kind: ChatKind,
+    #[serde(default)]
+    pub unread_only: bool,
+    pub cursor: Option<String>,
+    /// 1..=500, default 100.
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChatSummary {
+    pub jid: String,
+    /// Resolved display name (never empty; falls back to the phone/JID).
+    pub name: String,
+    pub is_group: bool,
+    #[ts(type = "number | null")]
+    pub last_message_ts: Option<i64>,
+    /// First ~120 chars of the last message, or a media label like "📄 file.pdf".
+    pub last_preview: Option<String>,
+    pub last_sender_name: Option<String>,
+    pub last_is_from_me: bool,
+    pub unread: bool,
+}
+
+// ---------- messages ----------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum MediaKind {
+    Image,
+    Video,
+    Audio,
+    Document,
+    Sticker,
+}
+
+impl MediaKind {
+    /// Map the bridge's `media_type` column. Reactions/empty → None.
+    pub fn from_db(s: &str) -> Option<Self> {
+        match s {
+            "image" => Some(Self::Image),
+            "video" => Some(Self::Video),
+            "audio" => Some(Self::Audio),
+            "document" => Some(Self::Document),
+            "sticker" => Some(Self::Sticker),
+            _ => None,
+        }
+    }
+    pub fn as_db(self) -> &'static str {
+        match self {
+            Self::Image => "image",
+            Self::Video => "video",
+            Self::Audio => "audio",
+            Self::Document => "document",
+            Self::Sticker => "sticker",
+        }
+    }
+}
+
+/// Where a locally available media file came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum MediaSource {
+    /// Downloaded by the bridge into its store.
+    Store,
+    /// Linked from the phone copy (phone_media_links).
+    Phone,
+    /// Not on disk yet; `ensure_media` can try to fetch it.
+    Missing,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MediaRef {
+    pub kind: MediaKind,
+    /// Original file name for documents; generated label otherwise.
+    pub filename: Option<String>,
+    #[ts(type = "number | null")]
+    pub size: Option<u64>,
+    /// Best-guess MIME type (from name/kind).
+    pub mime: Option<String>,
+    pub source: MediaSource,
+    /// `wa-media://m/<chat>/<id>` when available locally, else null.
+    pub url: Option<String>,
+    /// `wa-media://t/<chat>/<id>` thumbnail (images/videos/pdfs) when available.
+    pub thumb_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct QuotedRef {
+    pub id: String,
+    pub sender_name: Option<String>,
+    /// Short preview of the quoted message if we have it locally.
+    pub preview: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Reaction {
+    pub emoji: String,
+    pub sender_name: String,
+    pub is_from_me: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Message {
+    pub id: String,
+    pub chat_jid: String,
+    /// Normalised sender JID (phone@s.whatsapp.net when resolvable), null for own messages without sender.
+    pub sender_jid: Option<String>,
+    /// "Me" for own messages; resolved contact name or phone otherwise.
+    pub sender_name: String,
+    pub is_from_me: bool,
+    #[ts(type = "number")]
+    pub ts: i64,
+    /// Text content or caption ("" for pure media).
+    pub content: String,
+    pub media: Option<MediaRef>,
+    pub quoted: Option<QuotedRef>,
+    pub reactions: Vec<Reaction>,
+    /// Revoked ("This message was deleted").
+    pub deleted: bool,
+}
+
+/// Opaque cursor for paging a thread backwards: encoded "<ts>:<rowid>".
+pub type MsgCursor = String;
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MessagesQuery {
+    pub chat_jid: String,
+    /// Return messages strictly older than this cursor (null = newest page).
+    pub before: Option<MsgCursor>,
+    /// 1..=500, default 80.
+    pub limit: Option<u32>,
+}
+
+// ---------- search ----------
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SearchQuery {
+    /// Free text. 1–2 char queries fall back to substring scan.
+    pub text: String,
+    #[serde(default)]
+    pub chat_jids: Vec<String>,
+    /// Sender JIDs or bare phone numbers.
+    #[serde(default)]
+    pub senders: Vec<String>,
+    #[serde(default)]
+    pub media_kinds: Vec<MediaKind>,
+    pub from_me: Option<bool>,
+    #[ts(type = "number | null")]
+    pub after: Option<i64>,
+    #[ts(type = "number | null")]
+    pub before: Option<i64>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SearchHit {
+    pub message: Message,
+    pub chat_name: String,
+    /// Byte ranges into `message.content` (or filename) that matched, for highlighting.
+    pub highlights: Vec<(u32, u32)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SearchResults {
+    pub hits: Vec<SearchHit>,
+    /// Total matches (may be capped at 10_000).
+    pub total: u32,
+    pub took_ms: u32,
+    /// True while the FTS index is still being built (results may be incomplete).
+    pub index_building: bool,
+}
+
+// ---------- media library ----------
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MediaQuery {
+    pub chat_jid: Option<String>,
+    #[serde(default)]
+    pub kinds: Vec<MediaKind>,
+    /// Substring on filename / caption.
+    pub text: Option<String>,
+    #[ts(type = "number | null")]
+    pub after: Option<i64>,
+    #[ts(type = "number | null")]
+    pub before: Option<i64>,
+    /// true = only local files, false = only missing, null = both.
+    pub available: Option<bool>,
+    pub cursor: Option<String>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MediaItem {
+    pub message_id: String,
+    pub chat_jid: String,
+    pub chat_name: String,
+    pub sender_name: String,
+    pub is_from_me: bool,
+    #[ts(type = "number")]
+    pub ts: i64,
+    pub caption: String,
+    pub media: MediaRef,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum PreviewKind {
+    Pdf,
+    Image,
+    Video,
+    Audio,
+    Text,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PreviewRef {
+    pub kind: PreviewKind,
+    /// wa-media URL of the previewable file (a cached PDF for office docs).
+    pub url: Option<String>,
+    /// Original document URL (for "open externally"/save).
+    pub original_url: Option<String>,
+    pub note: Option<String>,
+}
+
+// ---------- sending ----------
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SendReq {
+    /// Chat JID or bare phone number.
+    pub recipient: String,
+    pub text: Option<String>,
+    /// Absolute local path chosen by the user (copied into the outbox before sending).
+    pub attachment: Option<String>,
+    /// Message id to reply to (must be in the same chat).
+    pub reply_to: Option<String>,
+    #[serde(default)]
+    pub mentions: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SendResult {
+    pub ok: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ReactReq {
+    pub chat_jid: String,
+    pub message_id: String,
+    /// "" removes our reaction.
+    pub emoji: String,
+}
+
+// ---------- bridge connection ----------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum BridgeState {
+    Connected,
+    Connecting,
+    Pairing,
+    Disconnected,
+    LoggedOut,
+    Outdated,
+    Error,
+    /// Bridge process not reachable at all.
+    Unreachable,
+}
+
+impl BridgeState {
+    pub fn from_bridge(s: &str) -> Self {
+        match s {
+            "connected" => Self::Connected,
+            "connecting" => Self::Connecting,
+            "pairing" => Self::Pairing,
+            "disconnected" => Self::Disconnected,
+            "logged_out" => Self::LoggedOut,
+            "outdated" => Self::Outdated,
+            _ => Self::Error,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConnectionState {
+    pub state: BridgeState,
+    pub connected: bool,
+    pub paired: bool,
+    pub message: String,
+    /// SVG data URL of the pairing QR (only while pairing).
+    pub qr_svg: Option<String>,
+    #[ts(type = "number | null")]
+    pub qr_expires_at: Option<i64>,
+    pub last_error: Option<String>,
+    #[ts(type = "number")]
+    pub checked_at: i64,
+}
+
+// ---------- jobs ----------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export)]
+pub enum JobSpec {
+    /// Download media still on WhatsApp servers (never asks the phone).
+    Backfill {
+        days: u32,
+        #[serde(default)]
+        kinds: Vec<MediaKind>,
+        workers: u8,
+        #[serde(default)]
+        retry_failed: bool,
+    },
+    /// Copy WhatsApp/Media from a USB (MTP) phone into phone_media.
+    PhoneSync,
+    /// Hash phone_media + extra folders and link files to messages.
+    LinkPhoneMedia {
+        #[serde(default)]
+        extra_dirs: Vec<String>,
+    },
+    Convert(ConvertSpec),
+    /// Rebuild the search index from scratch.
+    Reindex,
+    /// Generate thumbnails for local media.
+    Thumbnails,
+}
+
+impl JobSpec {
+    pub fn label(&self) -> String {
+        match self {
+            Self::Backfill { days, .. } => format!("Media backfill (last {days} days)"),
+            Self::PhoneSync => "Phone media sync (USB)".into(),
+            Self::LinkPhoneMedia { .. } => "Link phone media to messages".into(),
+            Self::Convert(c) => format!("Convert: {}", c.kind.label()),
+            Self::Reindex => "Rebuild search index".into(),
+            Self::Thumbnails => "Generate thumbnails".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum JobStatus {
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+impl JobStatus {
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct JobRecord {
+    #[ts(type = "number")]
+    pub id: i64,
+    pub spec: JobSpec,
+    pub label: String,
+    pub status: JobStatus,
+    #[ts(type = "number")]
+    pub done: u64,
+    #[ts(type = "number")]
+    pub total: u64,
+    pub phase: String,
+    pub message: Option<String>,
+    pub error: Option<String>,
+    /// Output files produced (conversions), as wa-media URLs.
+    pub outputs: Vec<String>,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    #[ts(type = "number | null")]
+    pub finished_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct JobProgress {
+    #[ts(type = "number")]
+    pub id: i64,
+    #[ts(type = "number")]
+    pub done: u64,
+    #[ts(type = "number")]
+    pub total: u64,
+    pub phase: String,
+    pub message: Option<String>,
+}
+
+// ---------- conversions ----------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ImageFormat {
+    Jpeg,
+    Webp,
+    Png,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export)]
+pub enum ConvertKind {
+    /// docx/pptx/xlsx/odt/... → PDF via LibreOffice.
+    OfficeToPdf,
+    /// Resize (longest side ≤ max_dim) and re-encode.
+    ImageCompress {
+        quality: u8,
+        max_dim: u32,
+        format: ImageFormat,
+    },
+    /// H.264/AAC MP4 at CRF, height ≤ max_height.
+    VideoCompress { crf: u8, max_height: u32 },
+    /// Ghostscript: "screen" | "ebook" | "printer".
+    PdfCompress { level: String },
+    /// Any audio → Ogg Opus (WhatsApp voice-note compatible).
+    AudioToOpus { bitrate_kbps: u32 },
+    /// Render PDF pages to PNG images.
+    PdfToImages { dpi: u32 },
+}
+
+impl ConvertKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::OfficeToPdf => "Office → PDF",
+            Self::ImageCompress { .. } => "Compress image",
+            Self::VideoCompress { .. } => "Compress video",
+            Self::PdfCompress { .. } => "Compress PDF",
+            Self::AudioToOpus { .. } => "Audio → Opus",
+            Self::PdfToImages { .. } => "PDF → images",
+        }
+    }
+}
+
+/// Where a conversion reads from: a local file the user picked, or a message's media.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export)]
+pub enum ConvertInput {
+    File {
+        path: String,
+    },
+    Message {
+        chat_jid: String,
+        message_id: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConvertSpec {
+    pub input: ConvertInput,
+    pub kind: ConvertKind,
+    /// Defaults to the exports dir.
+    pub output_dir: Option<String>,
+}
+
+// ---------- automation ----------
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Trigger {
+    /// Empty = any direct chat (groups need `include_groups` + listing them here).
+    #[serde(default)]
+    pub chat_jids: Vec<String>,
+    #[serde(default)]
+    pub include_groups: bool,
+    #[serde(default)]
+    pub senders: Vec<String>,
+    /// Any of these (case-insensitive substring) must appear; empty = no keyword filter.
+    #[serde(default)]
+    pub keywords: Vec<String>,
+    pub regex: Option<String>,
+    #[serde(default)]
+    pub media_kinds: Vec<MediaKind>,
+    /// Local time window "HH:MM"; both null = always.
+    pub active_from: Option<String>,
+    pub active_to: Option<String>,
+    /// In groups, only fire when we are @mentioned (always true for replies in groups).
+    #[serde(default)]
+    pub mention_only: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export)]
+pub enum Action {
+    Reply { text: String },
+    DownloadMedia,
+    Notify { title: Option<String> },
+    Forward { to_jid: String },
+    Tag { label: String },
+    Webhook { url: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Rule {
+    #[ts(type = "number | null")]
+    pub id: Option<i64>,
+    pub name: String,
+    pub enabled: bool,
+    /// Log what would happen instead of doing it (default true).
+    pub dry_run: bool,
+    pub trigger: Trigger,
+    pub actions: Vec<Action>,
+    /// Minimum seconds between firings in the same chat (default 600).
+    pub cooldown_secs: u32,
+    #[ts(type = "number")]
+    pub fired_count: u64,
+    #[ts(type = "number | null")]
+    pub last_fired_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RuleEval {
+    pub matched: bool,
+    /// Human-readable reasons for match / non-match (each check).
+    pub reasons: Vec<String>,
+    /// What would be executed.
+    pub planned: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AutomationEvent {
+    #[ts(type = "number")]
+    pub rule_id: i64,
+    pub rule_name: String,
+    pub chat_jid: String,
+    pub message_id: String,
+    pub dry_run: bool,
+    pub outcomes: Vec<String>,
+    #[ts(type = "number")]
+    pub at: i64,
+}
+
+// ---------- observability ----------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LogFilter {
+    /// Minimum level (default info).
+    pub level: Option<LogLevel>,
+    pub contains: Option<String>,
+    pub target: Option<String>,
+    #[ts(type = "number | null")]
+    pub since: Option<i64>,
+    /// Newest first, default 500, max 5000.
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LogLine {
+    #[ts(type = "number")]
+    pub ts: i64,
+    pub level: LogLevel,
+    pub target: String,
+    pub message: String,
+    /// Extra structured fields as compact JSON text ("" if none).
+    pub fields: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum IssueStatus {
+    Open,
+    Resolved,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Issue {
+    #[ts(type = "number")]
+    pub id: i64,
+    /// Stable hash of (kind, source, normalised message) used for dedup.
+    pub fingerprint: String,
+    pub title: String,
+    pub kind: crate::error::ErrorKind,
+    /// Component that raised it, e.g. "bridge", "jobs.phone_sync".
+    pub source: String,
+    #[ts(type = "number")]
+    pub count: u64,
+    #[ts(type = "number")]
+    pub first_seen: i64,
+    #[ts(type = "number")]
+    pub last_seen: i64,
+    pub last_detail: Option<String>,
+    pub status: IssueStatus,
+}
+
+// ---------- settings ----------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Theme {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Settings {
+    pub theme: Theme,
+    /// Master switch for the automation engine.
+    pub automation_enabled: bool,
+    /// Global cap on automated sends per hour.
+    pub automation_max_per_hour: u32,
+    pub desktop_notifications: bool,
+    /// Ask before sending attachments or messages to groups.
+    pub confirm_sends: bool,
+    pub backfill_days: u32,
+    pub start_hidden: bool,
+    pub autostart: bool,
+    /// Extra folders searched by the phone-media linker.
+    pub link_extra_dirs: Vec<String>,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            theme: Theme::System,
+            automation_enabled: false,
+            automation_max_per_hour: 20,
+            desktop_notifications: true,
+            confirm_sends: true,
+            backfill_days: 30,
+            start_hidden: false,
+            autostart: false,
+            link_extra_dirs: Vec::new(),
+        }
+    }
+}
+
+// ---------- app overview / events ----------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Overview {
+    #[ts(type = "number")]
+    pub chats: u64,
+    #[ts(type = "number")]
+    pub messages: u64,
+    #[ts(type = "number")]
+    pub media_total: u64,
+    #[ts(type = "number")]
+    pub media_local: u64,
+    #[ts(type = "number | null")]
+    pub oldest_ts: Option<i64>,
+    #[ts(type = "number | null")]
+    pub newest_ts: Option<i64>,
+    /// Indexed messages / total (search readiness).
+    #[ts(type = "number")]
+    pub indexed: u64,
+    pub app_version: String,
+}
+
+/// Payload of the `db:new-messages` event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct NewMessagesEvent {
+    pub chat_jids: Vec<String>,
+    #[ts(type = "number")]
+    pub max_rowid: i64,
+    pub count: u32,
+}
+
+/// Payload of the `db:changed` event (edits/revokes/name changes; refresh views).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DbChangedEvent {
+    pub chat_jids: Vec<String>,
+}
+
+/// Event names (keep in sync with app/ui/src/lib/api.ts).
+pub mod events {
+    pub const NEW_MESSAGES: &str = "db:new-messages";
+    pub const DB_CHANGED: &str = "db:changed";
+    pub const BRIDGE_STATE: &str = "bridge:state";
+    pub const JOB_PROGRESS: &str = "job:progress";
+    pub const JOB_FINISHED: &str = "job:finished";
+    pub const AUTOMATION_FIRED: &str = "automation:fired";
+    pub const ISSUE_NEW: &str = "issue:new";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tagged_enums_roundtrip() {
+        let j = serde_json::to_value(JobSpec::Backfill {
+            days: 30,
+            kinds: vec![MediaKind::Document],
+            workers: 4,
+            retry_failed: false,
+        })
+        .unwrap();
+        assert_eq!(j["type"], "backfill");
+        assert_eq!(j["kinds"][0], "document");
+        let a: Action =
+            serde_json::from_value(serde_json::json!({"type":"reply","text":"hi"})).unwrap();
+        assert_eq!(a, Action::Reply { text: "hi".into() });
+        let c: ConvertSpec = serde_json::from_value(serde_json::json!({
+            "input": {"type":"message","chat_jid":"a@g.us","message_id":"X"},
+            "kind": {"type":"image_compress","quality":80,"max_dim":1600,"format":"webp"},
+            "output_dir": null
+        }))
+        .unwrap();
+        assert!(matches!(
+            c.kind,
+            ConvertKind::ImageCompress {
+                format: ImageFormat::Webp,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn query_defaults_are_lenient() {
+        let q: SearchQuery = serde_json::from_value(serde_json::json!({"text":"hello"})).unwrap();
+        assert!(q.chat_jids.is_empty() && q.limit.is_none());
+        let q: ChatQuery = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(q.kind, ChatKind::All);
+    }
+
+    #[test]
+    fn media_kind_mapping() {
+        for k in [
+            MediaKind::Image,
+            MediaKind::Video,
+            MediaKind::Audio,
+            MediaKind::Document,
+            MediaKind::Sticker,
+        ] {
+            assert_eq!(MediaKind::from_db(k.as_db()), Some(k));
+        }
+        assert_eq!(MediaKind::from_db("reaction"), None);
+        assert_eq!(MediaKind::from_db(""), None);
+    }
+
+    #[test]
+    fn bridge_state_mapping() {
+        assert_eq!(
+            BridgeState::from_bridge("logged_out"),
+            BridgeState::LoggedOut
+        );
+        assert_eq!(BridgeState::from_bridge("weird"), BridgeState::Error);
+    }
+
+    #[test]
+    fn settings_default_is_safe() {
+        let s = Settings::default();
+        assert!(!s.automation_enabled);
+        assert!(s.confirm_sends);
+    }
+}

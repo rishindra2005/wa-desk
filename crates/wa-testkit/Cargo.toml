@@ -1,0 +1,16 @@
+[package]
+name = "wa-testkit"
+description = "Test fixtures: bridge-schema messages.db/whatsapp.db builders and seed data"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+wa-core.workspace = true
+rusqlite.workspace = true
+tempfile.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+

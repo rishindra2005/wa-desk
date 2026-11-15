@@ -1,0 +1,40 @@
+[package]
+name = "wa-desk"
+description = "Desktop app for the local WhatsApp archive and bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+default-run = "wa-desk"
+
+[lib]
+name = "wa_desk_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.4", features = [] }
+
+[dependencies]
+wa-core.workspace = true
+wa-db.workspace = true
+wa-bridge.workspace = true
+wa-jobs.workspace = true
+wa-automation.workspace = true
+wa-obs.workspace = true
+tauri = { version = "=2.12.5", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "=2.5.5"
+tauri-plugin-notification = "=2.8.0"
+tauri-plugin-autostart = "=2.7.0"
+tauri-plugin-dialog = "=2.8.4"
+tauri-plugin-opener = "=2.7.2"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+percent-encoding.workspace = true
+mime_guess.workspace = true
+
+[dev-dependencies]
+wa-testkit.workspace = true
+tempfile.workspace = true
