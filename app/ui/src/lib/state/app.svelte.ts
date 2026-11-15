@@ -9,6 +9,7 @@ import type { Theme } from "../bindings/Theme";
 import type { ViewId } from "../errors";
 import { toasts } from "./toasts.svelte";
 import { debounce } from "../utils/misc";
+import { notify } from "../platform";
 
 export const VIEWS: { id: ViewId; label: string }[] = [
   { id: "chats", label: "Chats" },
@@ -174,7 +175,17 @@ class AppState {
         else if (job.status === "failed") toasts.push({ kind: "error", title: `${job.label} failed`, message: job.error ?? "", action: { label: "Open System", run: () => this.go("system") } });
         void this.refreshOverview();
       }),
-      api.subscribe("issue:new", () => void this.refreshIssues()),
+      api.subscribe("issue:new", (issue) => {
+        void this.refreshIssues();
+        if (this.settings?.desktop_notifications && typeof document !== "undefined" && document.hidden) {
+          void notify(`wa-desk: ${issue.title}`, issue.source);
+        }
+      }),
+      api.subscribe("automation:fired", (e) => {
+        if (this.settings?.desktop_notifications && typeof document !== "undefined" && document.hidden) {
+          void notify(`Rule fired: ${e.rule_name}`, e.outcomes.join(" · "));
+        }
+      }),
       api.subscribe("db:new-messages", () => this.debouncedUnread()),
       api.subscribe("db:changed", () => this.debouncedUnread()),
     );
