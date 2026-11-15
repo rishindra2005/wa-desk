@@ -2,7 +2,8 @@
 // normalised errors. All go through IPC, so the mock backend answers in dev.
 
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { openUrl, openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { invoke } from "@tauri-apps/api/core";
 import { toAppError } from "./api";
 
 export interface FileFilter {
@@ -61,7 +62,8 @@ export async function openLink(url: string): Promise<void> {
 /** Open a local file (exports folder) with the default app. */
 export async function openLocalPath(path: string): Promise<void> {
   try {
-    await openPath(path);
+    // Backend command: only files inside the exports/cache folders are allowed.
+    await invoke<void>("open_path", { path });
   } catch (e) {
     throw toAppError(e);
   }
@@ -70,7 +72,7 @@ export async function openLocalPath(path: string): Promise<void> {
 /** Reveal a local file in the file manager. */
 export async function revealPath(path: string): Promise<void> {
   try {
-    await revealItemInDir(path);
+    await invoke<void>("reveal_path", { path });
   } catch (e) {
     throw toAppError(e);
   }

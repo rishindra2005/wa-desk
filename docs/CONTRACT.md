@@ -21,6 +21,8 @@ Calling conventions:
 | `preview_doc` | `{ chatJid, messageId }` | `PreviewRef`: office docs are converted to PDF (cached) |
 | `open_media_external` | `{ chatJid, messageId }` | `void`: opens with the system default app |
 | `save_media_as` | `{ chatJid, messageId, dest: string }` | `string`: the saved path (`dest` comes from the save dialog) |
+| `open_path` | `{ path: string }` | `void`: opens an exported or converted file; only files inside the exports or cache folders (`forbidden` otherwise) |
+| `reveal_path` | `{ path: string }` | `void`: shows that file in the file manager (same scope) |
 | `send_message` | `{ req: SendReq }` | `SendResult` |
 | `react` | `{ req: ReactReq }` | `void` |
 | `mark_read` | `{ chatJid }` | `void` |

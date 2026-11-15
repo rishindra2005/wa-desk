@@ -141,7 +141,7 @@ impl BridgeClient {
                 continue;
             }
             let text = resp.text().await.map_err(map_reqwest)?;
-            tracing::debug!(path, status = status.as_u16(), "bridge response");
+            tracing::trace!(path, status = status.as_u16(), "bridge response");
             return interpret(status, &text, &token);
         }
     }

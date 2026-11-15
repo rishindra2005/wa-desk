@@ -182,6 +182,13 @@ export class MockBackend {
         return this.context(chatJid, messageId, radius);
       }
       case "search": return this.search((a as { query: SearchQuery }).query);
+      case "open_path":
+      case "reveal_path": {
+        const { path } = a as { path: string };
+        if (!path || !path.startsWith("/")) fail("invalid", "Path must be absolute");
+        if (/\.bridge-token$|\.db($|-)/.test(path)) fail("forbidden", "Refusing to open a secret or database file");
+        return null;
+      }
       case "list_media": return this.listMedia((a as { query: MediaQuery }).query);
       case "ensure_media": {
         const { chatJid, messageId } = a as { chatJid: string; messageId: string };
