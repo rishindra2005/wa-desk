@@ -102,6 +102,7 @@ pub trait MessageStore: Send + Sync {
     fn get_message(&self, chat_jid: &str, message_id: &str) -> Result<Option<Message>>;
     fn media_info(&self, chat_jid: &str, message_id: &str) -> Result<Option<MediaInfo>>;
     /// Media rows newer than `since` (epoch secs; None = all) of the given kinds (empty = all).
+    /// Revoked (deleted) messages are excluded.
     fn media_rows(&self, since: Option<i64>, kinds: &[MediaKind]) -> Result<Vec<MediaInfo>>;
 }
 
