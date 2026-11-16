@@ -148,7 +148,7 @@ Paths follow the XDG directories on your system.
 | `app/src-tauri` | Tauri shell: commands, `wa-media` protocol, tray, background loops |
 | `app/ui` | Svelte UI, Vitest unit tests, Playwright e2e |
 
-The IPC surface is documented in [`docs/CONTRACT.md`](docs/CONTRACT.md). Contributor and agent rules are in [`AGENTS.md`](AGENTS.md).
+The IPC surface is documented in [`docs/CONTRACT.md`](docs/CONTRACT.md). Contributor rules are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Development
 

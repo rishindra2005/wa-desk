@@ -2,7 +2,7 @@
 //! the single error type, timestamp parsing, bridge store-path rules, runtime
 //! configuration and the traits that decouple crates from each other.
 //!
-//! Only the integrator edits this crate; other crates depend on it.
+//! The shared contract; every other crate depends on it. Update `docs/CONTRACT.md` when changing it.
 
 pub mod config;
 pub mod error;

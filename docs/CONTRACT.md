@@ -1,6 +1,6 @@
 # IPC contract: Tauri commands, events and media URLs
 
-Types are defined in `crates/wa-core/src/types.rs` and exported to `app/ui/src/lib/bindings/`. This file is the single source of truth for the names below. The integrator implements every command in `app/src-tauri`, and the UI calls them through `app/ui/src/lib/api.ts`.
+Types are defined in `crates/wa-core/src/types.rs` and exported to `app/ui/src/lib/bindings/`. This file is the single source of truth for the names below. Every command is implemented in `app/src-tauri`, and the UI calls them through `app/ui/src/lib/api.ts`.
 
 Calling conventions:
 - JS arguments are **camelCase**; Tauri maps them to the snake_case Rust parameter names.

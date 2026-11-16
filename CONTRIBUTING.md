@@ -1,8 +1,9 @@
-# wa-desk: contributor and agent guide
+# Contributing to wa-desk
 
 wa-desk is a Rust + Tauri v2 desktop app on top of a live WhatsApp bridge. It covers:
 - browsing, search and media/docs viewing;
 - sending, reacting and attaching;
+- archived, pinned and muted chats, and the call log;
 - file conversion;
 - automations;
 - a system dashboard with logs and issue reports.
@@ -16,17 +17,23 @@ wa-desk is a Rust + Tauri v2 desktop app on top of a live WhatsApp bridge. It co
 - The only write ever allowed to `messages.db` is mirroring `phone_media_links`, in short transactions.
 - Never read, log or serve `.bridge-token` or any `*.db*` file to the UI. All bridge HTTP happens in Rust.
 
-## Ownership
-Edit only the paths you own. Ask the integrator to change anything else.
+## Project layout
 
-| Path | Owner |
+| Path | What it holds |
 |---|---|
-| `crates/wa-core/**` (shared contract), `crates/wa-testkit/**`, `Cargo.toml`, `app/src-tauri/**`, `scripts/**`, this file | integrator |
-| `crates/wa-db/**` | agent A (data) |
-| `crates/wa-bridge/**`, `crates/wa-jobs/**`, `crates/wa-automation/**`, `crates/wa-obs/**` | agent B (effects) |
-| `app/ui/**` | agent C (UI) |
+| `crates/wa-core` | Shared contract: types (exported to TypeScript), traits, errors, paths, config |
+| `crates/wa-testkit` | Test fixtures that follow the real data layout and seed edge cases |
+| `crates/wa-db` | Read-only access to the bridge databases, the app's FTS index, the change watcher |
+| `crates/wa-bridge` | Bridge HTTP client and outbox |
+| `crates/wa-jobs` | Backfill, phone media sync, document linker, converters |
+| `crates/wa-automation` | Automation rules (off and dry-run by default) |
+| `crates/wa-obs` | Logging, redaction, issue reports |
+| `app/src-tauri` | The Tauri app: commands, `wa-media://` protocol, tray |
+| `app/ui` | Svelte 5 UI, with a mock backend for development and tests |
 
-You may add dependencies to your own crate's `Cargo.toml`, but only with versions from `[workspace.dependencies]`. If you need a new workspace dependency, choose a version released at least 2 weeks ago and say so in your hand-back.
+Changes to `crates/wa-core` change the contract for everything else. Update `docs/CONTRACT.md` in the same change.
+
+New dependencies must use versions from `[workspace.dependencies]`. If you add a workspace dependency, choose a version released at least 2 weeks ago.
 
 ## Contract
 - **Types:** `crates/wa-core/src/types.rs`. They are exported to TypeScript in `app/ui/src/lib/bindings/*.ts` by `cargo test -p wa-core`.
@@ -35,25 +42,28 @@ You may add dependencies to your own crate's `Cargo.toml`, but only with version
 - **Times:** Unix seconds (UTC). Parse stored text with `wa_core::time::parse_ts`, never compare raw timestamp strings.
 - **Bridge store paths:** use `wa_core::paths::bridge_media_path`.
 - **Anything served, linked or handed to a tool:** pass it through `wa_core::paths::resolve_within`.
-- **Configuration:** `wa_core::config::Paths`. Tests use `wa_testkit::Fixture`, which follows the real layout and seeds edge cases.
+- **Configuration:** `wa_core::config::Paths`. Tests use `wa_testkit::Fixture`.
+- Bridge endpoints the app relies on are documented in `docs/BRIDGE_API.md`.
 
-## Quality bar (must be green before handing back)
+## Quality bar
+All of this must be green before a change is merged:
 ```
 cargo fmt --all -- --check
-cargo clippy -p <your crates> --all-targets -- -D warnings
-cargo nextest run -p <your crates>        # or cargo test
+cargo clippy --workspace --all-targets -- -D warnings
+cargo nextest run --workspace        # or cargo test
 # UI: cd app/ui && npm run check && npm test && npx playwright test
 ```
+`scripts/check.sh` runs the whole gate.
 
 Other expectations:
 - No `unwrap()`/`expect()` in non-test code except on provably infallible values, with a comment explaining why.
 - Use `tracing` for structured logs with fields, not `println!`. Never log tokens, message text at info level, or full phone numbers.
 - Doc comments on public items. Keep functions small.
-- Tests cover the edge cases listed in your task.
-- Commit on your branch with clear messages. End each message with the attribution lines the integrator gives you.
+- Tests cover the edge cases of the change.
+- Clear, focused commit messages.
 
 ## Running things
 - Rust: `cargo test --workspace`, `cargo nextest run --workspace`.
 - UI dev against mocks: `cd app/ui && npm run dev` (mock IPC is on when `window.__TAURI_INTERNALS__` is absent).
-- Whole app: `cargo tauri dev` from `app/src-tauri`. `WA_DESK_DATA_ROOT=/tmp/wa-copy` points it at a copy of the data.
-- Full gate: `scripts/check.sh`.
+- Whole app: `cargo tauri dev` from `app/src-tauri`. `WA_DESK_DATA_ROOT=/tmp/wa-copy` points it at a copy of the data, and `WA_DESK_READ_ONLY=1` blocks every write.
+- Package: `cd app/src-tauri && cargo tauri build -b deb`.
