@@ -1,6 +1,7 @@
 import { mount } from "svelte";
 import "./app.css";
 import App from "./App.svelte";
+import { app } from "./lib/state/app.svelte";
 
 async function boot() {
   // Outside Tauri (browser dev, Playwright) run against the in-memory mock backend.
@@ -9,7 +10,6 @@ async function boot() {
     const params = new URLSearchParams(location.search);
     installMock({ quiet: params.has("quiet"), speed: params.has("fast") ? 4 : 1 });
     // Test hook (mock mode only): lets e2e drive navigation such as jumps to old messages.
-    const { app } = await import("./lib/state/app.svelte");
     (window as unknown as { __waApp?: typeof app }).__waApp = app;
   }
   // Apply the last theme before first paint to avoid a flash.

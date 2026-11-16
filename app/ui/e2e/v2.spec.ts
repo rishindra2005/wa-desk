@@ -245,6 +245,19 @@ test.describe("delivery ticks and sending", () => {
   });
 });
 
+test.describe("unread divider", () => {
+  test("shows N unread messages when opening an unread chat, and Jump to latest after scrolling up", async ({ page }) => {
+    await boot(page);
+    const unread = await page.evaluate(() => window.__waMock!.chats.find((c) => c.unread && c.chat_type === "direct")!.name);
+    await openChat(page, unread);
+    await expect(page.getByTestId("unread-divider")).toContainText(/\d+ unread messages?/);
+    await page.getByRole("log", { name: "Messages" }).evaluate((el) => (el.scrollTop = 0));
+    await expect(page.getByTestId("jump-latest")).toBeVisible();
+    await page.getByTestId("jump-latest").click();
+    await expect(page.getByTestId("jump-latest")).toHaveCount(0);
+  });
+});
+
 test.describe("avatars", () => {
   test("pictures fade in; chats without one fall back to initials / type icons", async ({ page }) => {
     await boot(page);
