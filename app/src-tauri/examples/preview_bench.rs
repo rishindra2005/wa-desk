@@ -179,6 +179,38 @@ async fn main() {
             ms.0, ms.1
         );
     }
+    // Old behaviour after TTL expiry: every concurrent caller reloads names.
+    {
+        let dl = std::time::Duration::from_millis(300);
+        let bridge = Arc::new(wa_db::RoPool::new(&paths.messages_db, dl));
+        let wa = Arc::new(wa_db::RoPool::new(&paths.whatsapp_db, dl));
+        let t = Instant::now();
+        let hs: Vec<_> = (0..40)
+            .map(|_| {
+                let r = wa_db::NameResolver::new(bridge.clone(), wa.clone());
+                std::thread::spawn(move || r.snapshot().is_ok())
+            })
+            .collect();
+        for h in hs {
+            let _ = h.join();
+        }
+        let herd = t.elapsed().as_secs_f64() * 1000.0;
+        let shared = Arc::new(wa_db::NameResolver::new(bridge, wa));
+        let t = Instant::now();
+        let hs: Vec<_> = (0..40)
+            .map(|_| {
+                let r = shared.clone();
+                std::thread::spawn(move || r.snapshot().is_ok())
+            })
+            .collect();
+        for h in hs {
+            let _ = h.join();
+        }
+        println!(
+            "40 concurrent name loads: independent (old herd) {herd:.0} ms, single-flight {:.0} ms",
+            t.elapsed().as_secs_f64() * 1000.0
+        );
+    }
     let core = Arc::new(core);
     for round in ["cold", "after warm"] {
         if round == "after warm" {
