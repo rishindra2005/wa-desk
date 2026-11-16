@@ -21,18 +21,17 @@ fn failed(msg: impl Into<String>) -> SendResult {
 }
 
 impl AppCore {
-    /// `forward_messages`: one `SendResult` per message × target, in order
-    /// (messages ascending, then targets as given).
+    /// `forward_messages`: one `SendResult` per target × message, target-major:
+    /// for each target in `req.to` order, every id in `req.message_ids` order
+    /// (unknown ids yield a failed result), so `len = to.len() × ids.len()`.
     pub async fn forward_messages(&self, req: ForwardReq) -> Result<Vec<SendResult>> {
         self.writable()?;
         require("chat", &req.from_chat)?;
-        let mut targets: Vec<String> = Vec::new();
-        for t in &req.to {
-            let j = recipient_jid(t)?;
-            if !targets.contains(&j) {
-                targets.push(j);
-            }
-        }
+        let targets: Vec<String> = req
+            .to
+            .iter()
+            .map(|t| recipient_jid(t))
+            .collect::<Result<_>>()?;
         if targets.is_empty() {
             return Err(AppError::invalid("Choose at least one chat to forward to"));
         }
@@ -58,10 +57,15 @@ impl AppCore {
         if msgs.is_empty() {
             return Err(AppError::not_found("Message not found"));
         }
-        let mut out = Vec::with_capacity(msgs.len() * targets.len());
-        for m in &msgs {
-            for t in &targets {
-                out.push(self.forward_one(m, t).await);
+        let by_id: std::collections::HashMap<&str, &Message> =
+            msgs.iter().map(|m| (m.id.as_str(), m)).collect();
+        let mut out = Vec::with_capacity(req.message_ids.len() * targets.len());
+        for t in &targets {
+            for id in &req.message_ids {
+                out.push(match by_id.get(id.as_str()) {
+                    Some(m) => self.forward_one(m, t).await,
+                    None => failed("Message not found"),
+                });
             }
         }
         let ok = out.iter().filter(|r| r.ok).count();

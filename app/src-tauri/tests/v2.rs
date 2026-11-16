@@ -139,6 +139,23 @@ async fn channel_profile_and_meta_down_not_cached() {
     assert!(c.verified);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn contact_without_chat_has_profile_and_zero_stats() {
+    let h = harness().await;
+    index(&h).await;
+    let jid = "919877777777@s.whatsapp.net";
+    let Profile::Contact(c) = h.core.get_profile(jid.into()).await.unwrap() else {
+        panic!()
+    };
+    assert_eq!(c.name, "+919877777777");
+    assert!(c.common_groups.is_empty());
+    let s = h.core.chat_stats(jid.into()).await.unwrap();
+    assert_eq!(
+        (s.messages, s.media, s.docs, s.links, s.starred),
+        (0, 0, 0, 0, 0)
+    );
+}
+
 // ---------- avatars ----------
 
 #[tokio::test(flavor = "multi_thread")]
@@ -464,17 +481,18 @@ async fn forward_text_and_media_with_limits() {
         .await
         .unwrap();
     assert_eq!(res.len(), 6);
-    // Order: messages ascending, then targets.
-    assert!(res[0].ok && res[1].ok, "text forwarded: {res:?}");
-    assert!(res[2].ok && res[3].ok, "media forwarded: {res:?}");
-    assert!(!res[4].ok && !res[5].ok, "deleted not forwarded");
+    // Target-major, ids in request order: [pdf, text, deleted] × [bob, group].
+    assert!(res[0].ok && res[1].ok, "{res:?}");
+    assert!(!res[2].ok, "deleted not forwarded");
+    assert!(res[3].ok && res[4].ok && !res[5].ok, "{res:?}");
     let sends = h.mock.calls_to("/api/send");
     assert_eq!(sends.len(), 4);
-    assert_eq!(sends[0]["message"], "Hi! Did you get the ML notes?");
     assert_eq!(sends[0]["recipient"], DM_BOB);
-    let media = sends[2]["media_path"].as_str().unwrap();
+    let media = sends[0]["media_path"].as_str().unwrap();
     assert!(media.starts_with(h.f.paths.outbox.to_str().unwrap()));
-    assert_eq!(sends[2]["message"], "here");
+    assert_eq!(sends[0]["message"], "here");
+    assert_eq!(sends[1]["message"], "Hi! Did you get the ML notes?");
+    assert_eq!(sends[2]["recipient"], GROUP_CLASS);
 
     let six: Vec<String> = (0..6)
         .map(|i| format!("91980000000{i}@s.whatsapp.net"))
@@ -499,18 +517,18 @@ async fn forward_text_and_media_with_limits() {
         .await
         .unwrap_err();
     assert_eq!(e.kind, ErrorKind::Invalid);
-    // Duplicate targets collapse (5 distinct + duplicates is fine).
-    let dup: Vec<String> = vec![DM_BOB.into(); 7];
+    // Unknown ids still get a (failed) slot: len = to × ids.
     let r = h
         .core
         .forward_messages(ForwardReq {
             from_chat: DM_ALICE.into(),
-            message_ids: vec![M_ALICE_1.into()],
-            to: dup,
+            message_ids: vec!["nope".into(), M_ALICE_1.into()],
+            to: vec![DM_BOB.into()],
         })
         .await
         .unwrap();
-    assert_eq!(r.len(), 1);
+    assert_eq!(r.len(), 2);
+    assert!(!r[0].ok && r[1].ok);
 }
 
 #[tokio::test(flavor = "multi_thread")]
