@@ -23,4 +23,16 @@ last_preview: string | null, last_sender_name: string | null, last_is_from_me: b
 /**
  * Delivery status of the last message when it is ours.
  */
-last_status: MessageStatus | null, unread: boolean, };
+last_status: MessageStatus | null, unread: boolean, 
+/**
+ * Archived on WhatsApp (synced app state).
+ */
+archived: boolean, 
+/**
+ * Pinned on WhatsApp; pinned chats sort first.
+ */
+pinned: boolean, 
+/**
+ * Muted until (epoch secs); `-1` = muted forever; null = not muted.
+ */
+muted_until: number | null, };

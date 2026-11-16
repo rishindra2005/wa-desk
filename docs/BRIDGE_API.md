@@ -62,3 +62,20 @@ These are the differences from the text above. Clients should code against these
 - `POST /api/call/reject` `{call_id, caller_jid}` → `{success, message}`: `RejectCall(ctx, callerJID, callID)` (caller JID normalized to non-AD; `@s.whatsapp.net` or `@lid`). The row is matched by `call_id` + `result='in_progress'` + (`from_jid` or `chat_jid` = caller). Status codes: 400 bad JSON / missing or non-user `caller_jid`; 409 no ringing row (unknown, already answered/rejected/ended); 503 disconnected; 502 whatsmeow error (row untouched). On success the row becomes `result='rejected'`, `ended_at=now`, `duration_sec=0`; the later `CallTerminate` keeps `rejected`. (`whatsapp-bridge/calls_local.go`)
 - **1:1 call media type:** in `CallOffer`, the offer node (`evt.Data`) is searched recursively; a `<video>` element at any depth, or a `media`/`type`/`call-type` attribute equal to `video` on any node, gives `call_type='video'`, otherwise `voice`. Keep group `CallOfferNotice.Media`.
 - Calls stay in the existing `calls` table. wa-desk polls it through its watcher, so no webhook is needed.
+
+## Chat state: archive, pin, mute (wa-desk additions, v4)
+- New table:
+  ```sql
+  chat_state(jid TEXT PRIMARY KEY, archived INTEGER NOT NULL DEFAULT 0, pinned INTEGER NOT NULL DEFAULT 0, muted_until INTEGER, updated_at TIMESTAMP)
+  ```
+  - `muted_until` is in epoch seconds; `-1` means forever; NULL means not muted.
+  - Keys are phone-form JIDs (the same form `chats` uses). LIDs are mapped through the LID store.
+- Filled from the app-state events `events.Archive`, `events.Pin` and `events.Mute`, live and during full syncs. Each is an upsert of that one field.
+- `POST /api/chats/resync-state` → `{success, changed}`
+  - Runs `FetchAppState(ctx, appstate.WAPatchRegularLow, true, false)` and then `WAPatchRegularHigh`, so archive, pin and mute are replayed.
+  - Rate-limited to once per 5 minutes; otherwise it returns the cached result.
+  - `changed` = rows whose values differ afterwards.
+- `POST /api/chat/archive {jid, archived}`, `POST /api/chat/pin {jid, pinned}` and `POST /api/chat/mute {jid, until}` (`until`: epoch seconds, `-1` forever, `null` unmute) → `{success, message}`.
+  - Use `appstate.BuildArchive` (with the last message's time and key from `messages`), `BuildPin` and `BuildMute`, then `SendAppState`.
+  - Update `chat_state` on success.
+  - 503 when disconnected; 400 bad JID; 502 on a whatsmeow error.

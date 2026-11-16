@@ -34,6 +34,11 @@ Calling conventions:
 | `refresh_chat_names` | none | `number`: how many chat names were fixed from bridge metadata (groups, communities, channels) |
 | `list_calls` | `{ query: CallQuery }` | `Page<CallRecord>` (newest first). Not part of `get_messages`: the UI merges `list_calls` for the open chat into the thread by time |
 | `reject_call` | `{ callId, callerJid }` | `void`: declines a ringing call (bridge `RejectCall`); `invalid` if it is not ringing |
+| `archive_count` | none | `number`: archived chats (for the "Archived" row) |
+| `set_archived` | `{ jid, archived: boolean }` | `void`: syncs to the phone through the bridge |
+| `set_pinned` | `{ jid, pinned: boolean }` | `void`: at most 3 pinned chats, like WhatsApp (`invalid` beyond that) |
+| `set_muted` | `{ jid, until: number \| null }` | `void`: epoch seconds; `-1` = always; `null` = unmute |
+| `resync_chat_state` | none | `number`: chats whose archive/pin/mute state changed after a full app-state resync |
 | `send_message` | `{ req: SendReq }` | `SendResult` |
 | `react` | `{ req: ReactReq }` | `void` |
 | `mark_read` | `{ chatJid }` | `void` |

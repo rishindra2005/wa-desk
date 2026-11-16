@@ -97,6 +97,9 @@ pub struct ChatQuery {
     pub kind: ChatKind,
     #[serde(default)]
     pub unread_only: bool,
+    /// false (default) = hide archived chats; true = only archived chats.
+    #[serde(default)]
+    pub archived: bool,
     pub cursor: Option<String>,
     /// 1..=500, default 100.
     pub limit: Option<u32>,
@@ -123,6 +126,13 @@ pub struct ChatSummary {
     /// Delivery status of the last message when it is ours.
     pub last_status: Option<MessageStatus>,
     pub unread: bool,
+    /// Archived on WhatsApp (synced app state).
+    pub archived: bool,
+    /// Pinned on WhatsApp; pinned chats sort first.
+    pub pinned: bool,
+    /// Muted until (epoch secs); `-1` = muted forever; null = not muted.
+    #[ts(type = "number | null")]
+    pub muted_until: Option<i64>,
 }
 
 // ---------- messages ----------

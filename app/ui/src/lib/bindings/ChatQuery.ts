@@ -5,7 +5,11 @@ export type ChatQuery = {
 /**
  * Case-insensitive substring on resolved name or JID.
  */
-filter: string | null, kind: ChatKind, unread_only: boolean, cursor: string | null, 
+filter: string | null, kind: ChatKind, unread_only: boolean, 
+/**
+ * false (default) = hide archived chats; true = only archived chats.
+ */
+archived: boolean, cursor: string | null, 
 /**
  * 1..=500, default 100.
  */
