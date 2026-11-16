@@ -18,6 +18,9 @@ mod util;
 pub use manager::{
     JobCtl, JobDeps, JobEvent, JobEventFn, JobFuture, JobManager, MAX_CONVERT, default_phone_root,
 };
-pub use thumbs::{THUMB_SIZE, office_preview, office_preview_with, thumbnail, thumbnail_with};
+pub use thumbs::{
+    THUMB_SIZE, cached_office_preview, cached_thumbnail, html_to_pdf, office_preview,
+    office_preview_with, thumbnail, thumbnail_with,
+};
 pub use tools::{Tool, ToolOutput, Tools};
 pub use util::{media_url, place_unique};

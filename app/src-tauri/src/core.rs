@@ -6,6 +6,16 @@
 //! over it, so everything here is testable without a webview: side effects
 //! that need Tauri go through the [`Emitter`] and [`Platform`] traits.
 
+mod export;
+mod forward;
+mod profile;
+mod warm;
+
+pub use export::{body_text, html_escape, render_html, safe_name, wa_time, whatsapp_lines};
+pub use forward::{FORWARD_MAX_MESSAGES, FORWARD_MAX_TARGETS};
+pub use profile::{AVATAR_WAIT, PROFILE_TTL, format_phone};
+pub use warm::{UserBusy, WarmState, WarmStats};
+
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -22,10 +32,11 @@ use wa_core::traits::{
     ProgressSink,
 };
 use wa_core::types::{
-    AutomationEvent, ChatQuery, ChatSummary, ConnectionState, DbChangedEvent, Issue, JobRecord,
-    JobSpec, LogFilter, LogLine, MediaItem, MediaKind, MediaQuery, MediaRef, MediaSource, Message,
-    MessagesQuery, NewMessagesEvent, Overview, Page, PreviewKind, PreviewRef, ReactReq, Rule,
-    RuleEval, SearchQuery, SearchResults, SendReq, SendResult, Settings, events,
+    AutomationEvent, ChatQuery, ChatStats, ChatSummary, ConnectionState, DbChangedEvent, Issue,
+    JobRecord, JobSpec, LinkItem, LogFilter, LogLine, MediaItem, MediaKind, MediaQuery, MediaRef,
+    MediaSource, Message, MessagesQuery, NewMessagesEvent, Overview, Page, PreviewKind, PreviewRef,
+    ReactReq, Rule, RuleEval, SearchHit, SearchQuery, SearchResults, SendReq, SendResult, Settings,
+    events,
 };
 use wa_core::{AppError, ErrorKind, Result};
 use wa_db::Db;
@@ -139,15 +150,14 @@ pub struct AppCore {
     automation_paused: AtomicBool,
     read_only: AtomicBool,
     last_bridge: Mutex<Option<ConnectionState>>,
+    caches: profile::ProfileCaches,
+    warm: Arc<warm::WarmState>,
 }
 
-/// Our own user parts (phone) from the name snapshot; empty if unknown yet.
+/// Our own user parts (phone and LID) from the name snapshot; empty if unknown yet.
 fn own_users(db: &Db) -> Vec<String> {
     match db.names().snapshot() {
-        Ok(n) => n
-            .own_jid()
-            .map(|j| vec![wa_automation::rules::user_part(&j).to_string()])
-            .unwrap_or_default(),
+        Ok(n) => n.own_user_parts(),
         Err(e) => {
             tracing::debug!(error = %e.message, "own JID not resolvable yet");
             Vec::new()
@@ -174,6 +184,8 @@ impl AppCore {
             emit_typed(&*em, events::ISSUE_NEW, i);
         }));
         let em = deps.emitter.clone();
+        let warm = Arc::new(warm::WarmState::default());
+        let warm_ev = warm.clone();
         let on_event: JobEventFn = Arc::new(move |ev| match ev {
             JobEvent::Progress(p) => emit_typed(&*em, events::JOB_PROGRESS, &p),
             JobEvent::Finished(r) => {
@@ -184,6 +196,9 @@ impl AppCore {
                     secs = r.finished_at.unwrap_or(r.created_at) - r.created_at,
                     "job finished"
                 );
+                if warm::kicks_warm(&r.spec, r.status) {
+                    warm_ev.kick();
+                }
                 emit_typed(&*em, events::JOB_FINISHED, &r);
             }
         });
@@ -201,6 +216,13 @@ impl AppCore {
             blocking(move || Ok(own_users(&db))).await?
         };
         let has_me = !me.is_empty();
+        let paused = {
+            let db = db.clone();
+            blocking(move || db.get_settings())
+                .await
+                .map(|s| !s.automation_enabled)
+                .unwrap_or(false)
+        };
         let core = Arc::new(Self {
             engine: RwLock::new(Arc::new(Self::build_engine(
                 &db,
@@ -218,9 +240,11 @@ impl AppCore {
             issues: deps.issues,
             emitter: deps.emitter,
             platform: deps.platform,
-            automation_paused: AtomicBool::new(false),
+            automation_paused: AtomicBool::new(paused),
             read_only: AtomicBool::new(false),
             last_bridge: Mutex::new(None),
+            caches: profile::ProfileCaches::default(),
+            warm,
         });
         tracing::info!(own_known = has_me, "app core ready");
         Ok(core)
@@ -298,15 +322,11 @@ impl AppCore {
         self.issues.record(kind, source, title, Some(detail));
     }
 
-    /// Tray "Pause automations": while paused, new rows never reach the engine.
-    /// Resuming moves the watermark so messages that arrived meanwhile never fire.
+    /// Tray "Pause automations": persisted as `settings.automation_enabled`
+    /// through [`Self::set_automation_enabled`], so resuming moves the
+    /// watermark and messages that arrived meanwhile never fire.
     pub async fn set_automation_paused(&self, paused: bool) -> Result<()> {
-        let was = self.automation_paused.swap(paused, Ordering::SeqCst);
-        if was && !paused {
-            let db = self.db.clone();
-            let engine = self.engine();
-            blocking(move || engine.enable(db.max_rowid()?)).await?;
-        }
+        self.set_automation_enabled(!paused).await?;
         tracing::info!(paused, "automation pause toggled");
         Ok(())
     }
@@ -389,6 +409,60 @@ impl AppCore {
     pub async fn list_media(&self, query: MediaQuery) -> Result<Page<MediaItem>> {
         let db = self.db.clone();
         blocking(move || db.list_media(&query)).await
+    }
+
+    /// `chat_stats`.
+    pub async fn chat_stats(&self, chat_jid: String) -> Result<ChatStats> {
+        require("chat", &chat_jid)?;
+        let db = self.db.clone();
+        blocking(move || db.chat_stats(&chat_jid)).await
+    }
+
+    /// `list_links` (newest first).
+    pub async fn list_links(
+        &self,
+        chat_jid: Option<String>,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> Result<Page<LinkItem>> {
+        let db = self.db.clone();
+        let chat = chat_jid.filter(|c| !c.trim().is_empty());
+        blocking(move || db.list_links(chat.as_deref(), cursor.as_deref(), limit)).await
+    }
+
+    /// `set_starred` (emits `db:changed` for the chat).
+    pub async fn set_starred(
+        &self,
+        chat_jid: String,
+        message_ids: Vec<String>,
+        starred: bool,
+    ) -> Result<()> {
+        require("chat", &chat_jid)?;
+        if message_ids.len() > 1000 {
+            return Err(AppError::invalid("Too many messages selected (max 1000)"));
+        }
+        let (db, c) = (self.db.clone(), chat_jid.clone());
+        blocking(move || db.set_starred(&c, &message_ids, starred)).await?;
+        emit_typed(
+            &*self.emitter,
+            events::DB_CHANGED,
+            &DbChangedEvent {
+                chat_jids: vec![chat_jid],
+            },
+        );
+        Ok(())
+    }
+
+    /// `list_starred` (newest first).
+    pub async fn list_starred(
+        &self,
+        chat_jid: Option<String>,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> Result<Page<SearchHit>> {
+        let db = self.db.clone();
+        let chat = chat_jid.filter(|c| !c.trim().is_empty());
+        blocking(move || db.list_starred(chat.as_deref(), cursor.as_deref(), limit)).await
     }
 
     async fn message(&self, chat_jid: &str, id: &str) -> Result<Message> {
@@ -500,6 +574,7 @@ impl AppCore {
             return Ok(mk(PreviewKind::Text, Some(m_url.clone()), None));
         }
         if OFFICE_EXTS.contains(&ext.as_str()) {
+            let _busy = self.warm.busy();
             return Ok(match wa_jobs::office_preview(&self.paths, &path).await {
                 Ok(_) => mk(
                     PreviewKind::Pdf,
@@ -764,10 +839,11 @@ impl AppCore {
                 let c2 = ctl.clone();
                 let n = blocking(move || {
                     let progress = |d: u64, t: u64| c2.progress(d, t, "indexing", None);
+                    let stop = || c2.cancel_token().is_cancelled();
                     if full {
-                        db.indexer().build_full(&progress)
+                        db.indexer().build_full_with(&progress, &stop)
                     } else {
-                        db.indexer().ensure(&progress)
+                        db.indexer().ensure_with(&progress, &stop)
                     }
                 })
                 .await?;
@@ -835,6 +911,7 @@ impl AppCore {
             Ok(s)
         })
         .await
+        .inspect(|_| self.automation_paused.store(!enabled, Ordering::SeqCst))
     }
 
     // ---------------- observability ----------------
@@ -926,6 +1003,8 @@ impl AppCore {
             Ok(old)
         })
         .await?;
+        self.automation_paused
+            .store(!s.automation_enabled, Ordering::SeqCst);
         if old.autostart != s.autostart
             && let Err(e) = self.platform.set_autostart(s.autostart)
         {
@@ -1071,6 +1150,23 @@ impl AppCore {
             "index reconciled"
         );
         Ok(())
+    }
+
+    /// Background chat-name refresh: a down or old bridge is not an error.
+    pub async fn refresh_names_tick(&self) -> Result<()> {
+        match self.refresh_chat_names().await {
+            Ok(_) => Ok(()),
+            Err(e)
+                if matches!(
+                    e.kind,
+                    ErrorKind::BridgeDown | ErrorKind::NotFound | ErrorKind::Timeout
+                ) =>
+            {
+                tracing::info!(kind = ?e.kind, "chat name refresh skipped");
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Remove staged outbox files older than 7 days.

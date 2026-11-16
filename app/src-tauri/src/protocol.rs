@@ -22,6 +22,10 @@ pub const FULL_LIMIT: u64 = 32 * 1024 * 1024;
 pub const CACHE_MEDIA: u32 = 3600;
 /// Cache lifetime of generated thumbnails/previews.
 pub const CACHE_DERIVED: u32 = 7 * 24 * 3600;
+/// Cache lifetime of profile pictures.
+pub const CACHE_AVATAR: u32 = 24 * 3600;
+/// Cache lifetime of "no profile picture" answers.
+pub const CACHE_AVATAR_NONE: u32 = 30 * 60;
 
 /// Served file with its metadata.
 struct Target {
@@ -153,6 +157,7 @@ async fn target_for(core: &AppCore, req: MediaRequest) -> Result<Target, AppErro
         } => {
             let (path, meta) = resolve_message(core, &chat_jid, &message_id).await?;
             let kind = meta.map(|m| m.kind).unwrap_or(MediaKind::Document);
+            let _busy = core.warm_state().busy();
             let thumb = wa_jobs::thumbnail(core.paths(), &path, kind)
                 .await?
                 .ok_or_else(|| AppError::not_found("no thumbnail for this file"))?;
@@ -178,11 +183,20 @@ async fn target_for(core: &AppCore, req: MediaRequest) -> Result<Target, AppErro
             if !OFFICE_EXTS.contains(&ext.as_str()) {
                 return Err(AppError::not_found("no preview for this file type"));
             }
+            let _busy = core.warm_state().busy();
             let pdf = wa_jobs::office_preview(core.paths(), &path).await?;
             Ok(Target {
                 path: pdf,
                 content_type: "application/pdf".into(),
                 max_age: CACHE_DERIVED,
+            })
+        }
+        MediaRequest::Avatar { jid, full } => {
+            let path = core.avatar_file(&jid, full).await?;
+            Ok(Target {
+                content_type: guess(&path),
+                path,
+                max_age: CACHE_AVATAR,
             })
         }
         MediaRequest::Export { path } => {
@@ -282,9 +296,14 @@ pub async fn handle(core: &AppCore, req: &Request<Vec<u8>>) -> Response<Vec<u8>>
         }
         _ => return text(StatusCode::METHOD_NOT_ALLOWED, origin, "method not allowed"),
     };
-    let Some(parsed) = parse(req.uri().path()) else {
+    let pq = req
+        .uri()
+        .path_and_query()
+        .map_or_else(|| req.uri().path(), |p| p.as_str());
+    let Some(parsed) = parse(pq) else {
         return text(StatusCode::BAD_REQUEST, origin, "bad wa-media URL");
     };
+    let is_avatar = matches!(parsed, MediaRequest::Avatar { .. });
     let range = req
         .headers()
         .get(header::RANGE)
@@ -292,6 +311,17 @@ pub async fn handle(core: &AppCore, req: &Request<Vec<u8>>) -> Response<Vec<u8>>
         .map(str::to_string);
     let target = match target_for(core, parsed).await {
         Ok(t) => t,
+        Err(e) if is_avatar && e.kind == ErrorKind::NotFound => {
+            // Cacheable so the webview does not ask again for every list row.
+            return base(StatusCode::NOT_FOUND, origin)
+                .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                .header(
+                    header::CACHE_CONTROL,
+                    format!("private, max-age={CACHE_AVATAR_NONE}"),
+                )
+                .body(b"no picture".to_vec())
+                .unwrap_or_else(|_| Response::new(Vec::new()));
+        }
         Err(e) => return error(&e, origin),
     };
     match serve(target, range, head, origin).await {

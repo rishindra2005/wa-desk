@@ -23,6 +23,8 @@ pub enum MediaRequest {
     },
     /// An exported/converted file by absolute path (must be inside exports/cache).
     Export { path: String },
+    /// Profile picture of a chat or person (`?full=1` for the large one).
+    Avatar { jid: String, full: bool },
 }
 
 fn decode(seg: &str) -> Option<String> {
@@ -41,9 +43,16 @@ fn decode_any(seg: &str) -> Option<String> {
     }
 }
 
-/// Parse the URI path (with or without leading '/', any query string ignored).
+/// Parse the URI path (with or without leading '/'). The query string is
+/// only used for `a` (`full=1`).
 pub fn parse(path: &str) -> Option<MediaRequest> {
-    let path = path.split(['?', '#']).next().unwrap_or("");
+    let (path, query) = {
+        let no_frag = path.split('#').next().unwrap_or("");
+        match no_frag.split_once('?') {
+            Some((p, q)) => (p, q),
+            None => (no_frag, ""),
+        }
+    };
     let mut it = path.trim_start_matches('/').splitn(3, '/');
     let kind = it.next()?;
     let a = it.next()?;
@@ -56,6 +65,19 @@ pub fn parse(path: &str) -> Option<MediaRequest> {
             let p = decode_any(a)?;
             p.starts_with('/')
                 .then_some(MediaRequest::Export { path: p })
+        }
+        "a" => {
+            if it.next().is_some() {
+                return None;
+            }
+            let jid = decode(a)?;
+            if jid.contains('/') || !jid.contains('@') {
+                return None;
+            }
+            let full = query
+                .split('&')
+                .any(|kv| kv == "full=1" || kv == "full=true");
+            Some(MediaRequest::Avatar { jid, full })
         }
         "m" | "t" | "p" => {
             let b = it.next()?;
@@ -118,6 +140,27 @@ mod tests {
             parse("/p/a%40b/Y"),
             Some(MediaRequest::Preview { .. })
         ));
+    }
+
+    #[test]
+    fn parses_avatars() {
+        assert_eq!(
+            parse("/a/120363%40g.us"),
+            Some(MediaRequest::Avatar {
+                jid: "120363@g.us".into(),
+                full: false
+            })
+        );
+        assert_eq!(
+            parse("/a/9198%40s.whatsapp.net?x=1&full=1"),
+            Some(MediaRequest::Avatar {
+                jid: "9198@s.whatsapp.net".into(),
+                full: true
+            })
+        );
+        for bad in ["/a", "/a/", "/a/nojid", "/a/x%40g.us/extra", "/a/%2F%40x"] {
+            assert_eq!(parse(bad), None, "{bad}");
+        }
     }
 
     #[test]

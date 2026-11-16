@@ -283,6 +283,15 @@ pub fn run() {
             commands::export_issue_bundle,
             commands::get_settings,
             commands::set_settings,
+            commands::get_profile,
+            commands::chat_stats,
+            commands::list_links,
+            commands::set_starred,
+            commands::list_starred,
+            commands::export_chat,
+            commands::forward_messages,
+            commands::copy_messages_text,
+            commands::refresh_chat_names,
         ]);
     let builder = builder.setup(move |app| setup(app, paths, issues, hidden_arg));
     let app = match builder.build(tauri::generate_context!()) {
