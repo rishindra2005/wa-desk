@@ -127,6 +127,7 @@ fn pinned_sort_first_then_by_time() {
         vec![DM_BOB, DM_UNKNOWN, GROUP_CLASS, DM_ALICE, DM_LID]
     );
     assert!(v[0].pinned && v[1].pinned && !v[2].pinned);
+    assert_eq!(db.pinned_count().unwrap(), 2);
     // Pinned chats still honour unread_only.
     let u = db
         .list_chats(&ChatQuery {

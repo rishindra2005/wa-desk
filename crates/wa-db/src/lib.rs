@@ -194,6 +194,11 @@ impl Db {
         chats::archive_count(&self.core)
     }
 
+    /// Number of pinned (non-archived) chats, for the 3-pin limit.
+    pub fn pinned_count(&self) -> Result<u32> {
+        chats::pinned_count(&self.core)
+    }
+
     /// Call log, newest first; cursor `"ts:rowid"`. Empty without a `calls` table.
     pub fn list_calls(&self, q: &CallQuery) -> Result<Page<CallRecord>> {
         calls::list_calls(&self.core, q)

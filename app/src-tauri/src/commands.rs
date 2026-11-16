@@ -149,6 +149,36 @@ pub async fn reject_call(core: Core<'_>, call_id: String, caller_jid: String) ->
     logged("reject_call", core.reject_call(call_id, caller_jid).await)
 }
 
+/// `archive_count` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn archive_count(core: Core<'_>) -> R<u32> {
+    logged("archive_count", core.archive_count().await)
+}
+
+/// `set_archived` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn set_archived(core: Core<'_>, jid: String, archived: bool) -> R<()> {
+    logged("set_archived", core.set_archived(jid, archived).await)
+}
+
+/// `set_pinned` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn set_pinned(core: Core<'_>, jid: String, pinned: bool) -> R<()> {
+    logged("set_pinned", core.set_pinned(jid, pinned).await)
+}
+
+/// `set_muted` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn set_muted(core: Core<'_>, jid: String, until: Option<i64>) -> R<()> {
+    logged("set_muted", core.set_muted(jid, until).await)
+}
+
+/// `resync_chat_state` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn resync_chat_state(core: Core<'_>) -> R<u32> {
+    logged("resync_chat_state", core.resync_chat_state().await)
+}
+
 /// `mark_read` (see docs/CONTRACT.md).
 #[tauri::command]
 pub async fn mark_read(core: Core<'_>, chat_jid: String) -> R<()> {

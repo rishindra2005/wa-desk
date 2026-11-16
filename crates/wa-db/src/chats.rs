@@ -355,6 +355,17 @@ pub(crate) fn archive_count(core: &Core) -> Result<u32> {
     Ok(u32::try_from(n).unwrap_or(u32::MAX))
 }
 
+/// Chats currently pinned (archived chats are never counted: archiving unpins).
+pub(crate) fn pinned_count(core: &Core) -> Result<u32> {
+    let names = core.names.snapshot()?;
+    let conn = core.bridge.get()?;
+    let n = candidates(core, &conn, &names, None)?
+        .iter()
+        .filter(|c| c.state.pinned && !c.state.archived)
+        .count();
+    Ok(u32::try_from(n).unwrap_or(u32::MAX))
+}
+
 /// `get_chat`: summary of one chat (any chat row, including status).
 pub(crate) fn get_chat(core: &Core, jid: &str) -> Result<ChatSummary> {
     let names = core.names.snapshot()?;

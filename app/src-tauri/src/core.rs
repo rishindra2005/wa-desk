@@ -6,6 +6,7 @@
 //! over it, so everything here is testable without a webview: side effects
 //! that need Tauri go through the [`Emitter`] and [`Platform`] traits.
 
+mod chat_state;
 mod export;
 mod forward;
 mod profile;

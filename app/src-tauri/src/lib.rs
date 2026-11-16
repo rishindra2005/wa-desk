@@ -294,6 +294,11 @@ pub fn run() {
             commands::forward_messages,
             commands::copy_messages_text,
             commands::refresh_chat_names,
+            commands::archive_count,
+            commands::set_archived,
+            commands::set_pinned,
+            commands::set_muted,
+            commands::resync_chat_state,
         ]);
     let builder = builder.setup(move |app| setup(app, paths, issues, hidden_arg));
     let app = match builder.build(tauri::generate_context!()) {
