@@ -66,61 +66,65 @@ function summary(i: number): ChatSummary {
 }
 
 describe("Composer", () => {
+  beforeEach(() => localStorage.clear());
+
   it("sends on Enter, keeps newline on Shift+Enter", async () => {
-    b.setBridge("connected");
-    const chat = summary(0);
-    const onsent = vi.fn();
-    render(Composer, { chat, replyTo: null, confirmSends: true, oncancelreply: () => {}, onsent });
+    const onsend = vi.fn();
+    render(Composer, { chat: summary(0), replyTo: null, confirmSends: true, oncancelreply: () => {}, onsend });
     const input = screen.getByTestId("composer-input") as HTMLTextAreaElement;
     await fireEvent.input(input, { target: { value: "hello there" } });
     await fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
-    expect(onsent).not.toHaveBeenCalled();
+    expect(onsend).not.toHaveBeenCalled();
     await fireEvent.keyDown(input, { key: "Enter" });
-    await waitFor(() => expect(onsent).toHaveBeenCalled());
-    expect(b.chats[0]!.messages.at(-1)).toMatchObject({ content: "hello there", is_from_me: true });
+    expect(onsend).toHaveBeenCalledWith(expect.objectContaining({ recipient: b.chats[0]!.jid, text: "hello there" }), null);
     expect(input.value).toBe("");
   });
 
   it("asks for confirmation in groups when confirm_sends is on", async () => {
-    b.setBridge("connected");
-    const gi = b.chats.findIndex((c) => c.is_group);
-    const chat = summary(gi);
-    const before = b.chats[gi]!.messages.length;
-    render(Composer, { chat, replyTo: null, confirmSends: true, oncancelreply: () => {} });
-    const input = screen.getByTestId("composer-input");
-    await fireEvent.input(input, { target: { value: "hi group" } });
+    const onsend = vi.fn();
+    const gi = b.chats.findIndex((c) => c.chat_type === "group");
+    render(Composer, { chat: summary(gi), replyTo: null, confirmSends: true, oncancelreply: () => {}, onsend });
+    await fireEvent.input(screen.getByTestId("composer-input"), { target: { value: "hi group" } });
     await fireEvent.click(screen.getByTestId("send-btn"));
     expect(screen.getByTestId("confirm-send")).toBeTruthy();
-    expect(b.chats[gi]!.messages.length).toBe(before);
+    expect(onsend).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByTestId("confirm-send-btn"));
-    await waitFor(() => expect(b.chats[gi]!.messages.length).toBe(before + 1));
+    expect(onsend).toHaveBeenCalledTimes(1);
   });
 
   it("skips confirmation when disabled and passes reply_to", async () => {
-    b.setBridge("connected");
-    const gi = b.chats.findIndex((c) => c.is_group);
+    const onsend = vi.fn();
+    const gi = b.chats.findIndex((c) => c.chat_type === "group");
     const target = b.chats[gi]!.messages.at(-3)!;
     const cancel = vi.fn();
-    render(Composer, { chat: summary(gi), replyTo: target, confirmSends: false, oncancelreply: cancel });
+    render(Composer, { chat: summary(gi), replyTo: target, confirmSends: false, oncancelreply: cancel, onsend });
     expect(screen.getByTestId("reply-chip")).toBeTruthy();
     await fireEvent.input(screen.getByTestId("composer-input"), { target: { value: "re" } });
     await fireEvent.click(screen.getByTestId("send-btn"));
-    await waitFor(() => expect(b.chats[gi]!.messages.at(-1)?.quoted?.id).toBe(target.id));
+    expect(onsend).toHaveBeenCalledWith(expect.objectContaining({ reply_to: target.id }), target);
     expect(cancel).toHaveBeenCalled();
   });
 
-  it("shows a friendly toast when the bridge is down and keeps the draft", async () => {
-    b.setBridge("unreachable");
-    render(Composer, { chat: summary(0), replyTo: null, confirmSends: false, oncancelreply: () => {} });
-    const input = screen.getByTestId("composer-input") as HTMLTextAreaElement;
-    await fireEvent.input(input, { target: { value: "draft" } });
+  it("persists a draft per chat and restores it", async () => {
+    const chat = summary(0);
+    const first = render(Composer, { chat, replyTo: null, confirmSends: false, oncancelreply: () => {}, onsend: () => {} });
+    await fireEvent.input(screen.getByTestId("composer-input"), { target: { value: "unfinished thought" } });
+    expect(localStorage.getItem(`wa-desk.draft.${chat.jid}`)).toBe("unfinished thought");
+    first.unmount();
+    render(Composer, { chat, replyTo: null, confirmSends: false, oncancelreply: () => {}, onsend: () => {} });
+    await waitFor(() => expect((screen.getByTestId("composer-input") as HTMLTextAreaElement).value).toBe("unfinished thought"));
+  });
+
+  it("clears the draft after sending", async () => {
+    const chat = summary(0);
+    render(Composer, { chat, replyTo: null, confirmSends: false, oncancelreply: () => {}, onsend: () => {} });
+    await fireEvent.input(screen.getByTestId("composer-input"), { target: { value: "bye" } });
     await fireEvent.click(screen.getByTestId("send-btn"));
-    await waitFor(() => expect(toasts.items.some((t) => t.title === "WhatsApp bridge is offline")).toBe(true));
-    expect(input.value).toBe("draft");
+    expect(localStorage.getItem(`wa-desk.draft.${chat.jid}`)).toBeNull();
   });
 
   it("disables send when empty", () => {
-    render(Composer, { chat: summary(0), replyTo: null, confirmSends: false, oncancelreply: () => {} });
+    render(Composer, { chat: summary(0), replyTo: null, confirmSends: false, oncancelreply: () => {}, onsend: () => {} });
     expect((screen.getByTestId("send-btn") as HTMLButtonElement).disabled).toBe(true);
   });
 });

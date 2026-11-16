@@ -14,6 +14,8 @@ const msg = (over: Partial<Message> = {}): Message => ({
   quoted: null,
   reactions: [],
   deleted: false,
+  status: null,
+  starred: false,
   ...over,
 });
 

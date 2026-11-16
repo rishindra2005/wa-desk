@@ -91,6 +91,8 @@ describe("formatPhone", () => {
   it("leaves non-numbers alone", () => expect(formatPhone("hello")).toBe("hello"));
   it("displayName prefers names", () => {
     expect(displayName("Ananya", "91@s.whatsapp.net")).toBe("Ananya");
-    expect(displayName("204958372615402", "204958372615402@lid")).toBe("~204958372615402");
+    expect(displayName("204958372615402", "204958372615402@lid")).toBe("Unknown contact");
+    expect(displayName("Rahul K", "204958372615402@lid")).toBe("~Rahul K");
+    expect(displayName("919845012345", "919845012345@s.whatsapp.net")).toBe("+91 98450 12345");
   });
 });

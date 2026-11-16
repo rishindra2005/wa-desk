@@ -9,6 +9,7 @@
   import { toasts } from "../../state/toasts.svelte";
 
   let chat = $state<ChatSummary | null>(null);
+  let wasUnread = $state(false);
   let listRef: ChatList | undefined = $state();
 
   async function markRead(c: ChatSummary) {
@@ -24,7 +25,9 @@
 
   function select(c: ChatSummary) {
     app.openChatJid = c.jid;
+    wasUnread = c.unread;
     chat = c;
+    if (app.profileJid && app.profileJid !== c.jid) app.openProfile(c.jid);
     void markRead(c);
   }
 
@@ -35,7 +38,9 @@
     api.getChat(jid).then(
       (c) => {
         if (app.openChatJid === jid) {
+          wasUnread = c.unread;
           chat = c;
+          if (app.profileJid && app.profileJid !== c.jid) app.openProfile(c.jid);
           void markRead(c);
         }
       },
@@ -52,7 +57,7 @@
   </div>
   <div class="min-w-0 flex-1">
     {#if chat}
-      <Thread {chat} jumpId={jump?.messageId ?? null} jumpNonce={jump?.nonce ?? 0} />
+      <Thread {chat} {wasUnread} jumpId={jump?.messageId ?? null} jumpNonce={jump?.nonce ?? 0} />
     {:else}
       <div class="h-full" style="background: var(--thread-bg)">
         <EmptyState icon={MessagesSquare} title="Pick a conversation" message="Choose a chat on the left, or press Ctrl+K to jump to one." />

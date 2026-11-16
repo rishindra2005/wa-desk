@@ -6,6 +6,12 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AppError } from "./bindings/AppError";
 import type { AutomationEvent } from "./bindings/AutomationEvent";
 import type { ChatQuery } from "./bindings/ChatQuery";
+import type { ChatStats } from "./bindings/ChatStats";
+import type { ExportReq } from "./bindings/ExportReq";
+import type { ForwardReq } from "./bindings/ForwardReq";
+import type { LinkItem } from "./bindings/LinkItem";
+import type { Profile } from "./bindings/Profile";
+import type { SearchHit } from "./bindings/SearchHit";
 import type { ChatSummary } from "./bindings/ChatSummary";
 import type { ConnectionState } from "./bindings/ConnectionState";
 import type { DbChangedEvent } from "./bindings/DbChangedEvent";
@@ -117,6 +123,21 @@ export const openMediaExternal = (chatJid: string, messageId: string) =>
   call<void>("open_media_external", { chatJid, messageId });
 export const saveMediaAs = (chatJid: string, messageId: string, dest: string) =>
   call<string>("save_media_as", { chatJid, messageId, dest });
+export const openPath = (path: string) => call<void>("open_path", { path });
+export const revealPath = (path: string) => call<void>("reveal_path", { path });
+export const getProfile = (jid: string) => call<Profile>("get_profile", { jid });
+export const chatStats = (chatJid: string) => call<ChatStats>("chat_stats", { chatJid });
+export const listLinks = (chatJid: string | null, cursor: string | null, limit: number) =>
+  call<Page<LinkItem>>("list_links", { chatJid, cursor, limit });
+export const setStarred = (chatJid: string, messageIds: string[], starred: boolean) =>
+  call<void>("set_starred", { chatJid, messageIds, starred });
+export const listStarred = (chatJid: string | null, cursor: string | null, limit: number) =>
+  call<Page<SearchHit>>("list_starred", { chatJid, cursor, limit });
+export const exportChat = (req: ExportReq) => call<string>("export_chat", { req });
+export const forwardMessages = (req: ForwardReq) => call<SendResult[]>("forward_messages", { req });
+export const copyMessagesText = (chatJid: string, messageIds: string[]) =>
+  call<string>("copy_messages_text", { chatJid, messageIds });
+export const refreshChatNames = () => call<number>("refresh_chat_names");
 export const sendMessage = (req: SendReq) => call<SendResult>("send_message", { req });
 export const react = (req: ReactReq) => call<void>("react", { req });
 export const markRead = (chatJid: string) => call<void>("mark_read", { chatJid });
@@ -142,7 +163,9 @@ export const setSettings = (settings: Settings) => call<Settings>("set_settings"
 /** Every command name in the contract (used by tests to check mock coverage). */
 export const COMMANDS = [
   "overview", "list_chats", "get_chat", "get_messages", "get_message_context", "search", "list_media",
-  "ensure_media", "preview_doc", "open_media_external", "save_media_as", "send_message", "react", "mark_read",
+  "ensure_media", "preview_doc", "open_media_external", "save_media_as", "open_path", "reveal_path", "get_profile",
+  "chat_stats", "list_links", "set_starred", "list_starred", "export_chat", "forward_messages", "copy_messages_text",
+  "refresh_chat_names", "send_message", "react", "mark_read",
   "connection_status", "reconnect", "start_job", "cancel_job", "list_jobs", "list_rules", "save_rule",
   "delete_rule", "test_rule", "automation_log", "set_automation_enabled", "query_logs", "list_issues",
   "resolve_issue", "clear_resolved_issues", "export_issue_bundle", "get_settings", "set_settings",

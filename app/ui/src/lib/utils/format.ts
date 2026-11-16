@@ -173,11 +173,33 @@ export function looksLikeNumber(name: string): boolean {
   return /^[+~]?[\d\s-]{6,}$/.test(name) || name.includes("@");
 }
 
-/** A sender label: resolved name, or a formatted phone / LID. */
+/**
+ * A sender label: resolved name, or a nicely formatted phone.
+ * LID senders show "~Push name" when a name is known, else "Unknown contact".
+ */
 export function displayName(name: string, jid?: string | null): string {
-  if (name && !looksLikeNumber(name)) return name;
+  const isLid = !!jid && jid.endsWith("@lid");
+  if (name && !looksLikeNumber(name)) return isLid && !name.startsWith("~") ? `~${name}` : name;
+  if (isLid || name.endsWith("@lid")) return "Unknown contact";
   if (jid) return formatPhone(jid);
   return name.includes("@") ? formatPhone(name) : name;
+}
+
+/** Chat title: never a raw number/JID when a better label exists. */
+export function chatLabel(c: { name: string; jid: string; chat_type?: string | undefined }): string {
+  if (c.name && !looksLikeNumber(c.name)) return c.name;
+  const t = c.chat_type ?? (c.jid.endsWith("@g.us") ? "group" : "direct");
+  if (t === "group") return "Unnamed group";
+  if (t === "community") return "Unnamed community";
+  if (t === "channel") return "Unnamed channel";
+  if (t === "broadcast") return "Broadcast list";
+  if (c.jid.endsWith("@lid")) return "Unknown contact";
+  return formatPhone(c.jid) || c.name;
+}
+
+/** Short type label for subtitles. */
+export function chatTypeLabel(t: string): string {
+  return { direct: "Contact", group: "Group", community: "Community", channel: "Channel", broadcast: "Broadcast list", status: "Status" }[t] ?? t;
 }
 
 /** "HH:MM" validity (00:00–23:59). */
