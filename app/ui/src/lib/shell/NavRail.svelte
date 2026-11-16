@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { MessageCircle, Search, Images, FileText, Wrench, Bot, Activity, Settings } from "@lucide/svelte";
+  import { MessageCircle, Search, Images, FileText, Wrench, Bot, Activity, Settings, Phone } from "@lucide/svelte";
   import { app, VIEWS } from "../state/app.svelte";
+  import { calls } from "../state/calls.svelte";
   import type { ViewId } from "../errors";
 
   const ICONS: Record<ViewId, typeof MessageCircle> = {
     chats: MessageCircle,
+    calls: Phone,
     search: Search,
     media: Images,
     docs: FileText,
@@ -16,6 +18,7 @@
 
   function badge(id: ViewId): { n: number; tone: string } | null {
     if (id === "chats" && app.unreadChats > 0) return { n: app.unreadChats, tone: "bg-accent text-accent-fg" };
+    if (id === "calls" && calls.missedCount > 0) return { n: calls.missedCount, tone: "bg-danger text-white" };
     if (id === "system" && app.openIssues > 0) return { n: app.openIssues, tone: "bg-danger text-white" };
     if (id === "system" && app.runningJobs.length > 0) return { n: app.runningJobs.length, tone: "bg-info text-white" };
     return null;

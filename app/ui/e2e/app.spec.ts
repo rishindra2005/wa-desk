@@ -171,7 +171,7 @@ test.describe("media & docs", () => {
 test.describe("system", () => {
   test("starts and cancels a job", async ({ page }) => {
     await boot(page);
-    await page.keyboard.press("Alt+7");
+    await page.keyboard.press("Alt+8");
     await expect(page.getByTestId("view-system")).toBeVisible();
     await page.getByTestId("job-action-reindex").click();
     const card = page.locator('[data-testid="job-card"][data-status="running"], [data-testid="job-card"][data-status="queued"]').first();
@@ -232,7 +232,7 @@ test.describe("system", () => {
 test.describe("automations", () => {
   test("creates and tests a rule", async ({ page }) => {
     await boot(page);
-    await page.keyboard.press("Alt+6");
+    await page.keyboard.press("Alt+7");
     await expect(page.getByTestId("rule-row").first()).toBeVisible();
     const count = await page.getByTestId("rule-row").count();
     await page.getByTestId("new-rule").click();

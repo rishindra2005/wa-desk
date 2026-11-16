@@ -6,10 +6,10 @@ use std::sync::Arc;
 use tauri::State;
 use wa_core::AppError;
 use wa_core::types::{
-    AutomationEvent, ChatQuery, ChatStats, ChatSummary, ConnectionState, ExportReq, ForwardReq,
-    Issue, JobRecord, JobSpec, LinkItem, LogFilter, LogLine, MediaItem, MediaQuery, MediaRef,
-    Message, MessagesQuery, Overview, Page, PreviewRef, Profile, ReactReq, Rule, RuleEval,
-    SearchHit, SearchQuery, SearchResults, SendReq, SendResult, Settings,
+    AutomationEvent, CallQuery, CallRecord, ChatQuery, ChatStats, ChatSummary, ConnectionState,
+    ExportReq, ForwardReq, Issue, JobRecord, JobSpec, LinkItem, LogFilter, LogLine, MediaItem,
+    MediaQuery, MediaRef, Message, MessagesQuery, Overview, Page, PreviewRef, Profile, ReactReq,
+    Rule, RuleEval, SearchHit, SearchQuery, SearchResults, SendReq, SendResult, Settings,
 };
 
 use crate::core::AppCore;
@@ -135,6 +135,18 @@ pub async fn send_message(core: Core<'_>, req: SendReq) -> R<SendResult> {
 #[tauri::command]
 pub async fn react(core: Core<'_>, req: ReactReq) -> R<()> {
     logged("react", core.react(req).await)
+}
+
+/// `list_calls` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn list_calls(core: Core<'_>, query: CallQuery) -> R<Page<CallRecord>> {
+    logged("list_calls", core.list_calls(query).await)
+}
+
+/// `reject_call` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn reject_call(core: Core<'_>, call_id: String, caller_jid: String) -> R<()> {
+    logged("reject_call", core.reject_call(call_id, caller_jid).await)
 }
 
 /// `mark_read` (see docs/CONTRACT.md).

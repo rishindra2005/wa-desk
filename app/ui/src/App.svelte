@@ -12,6 +12,8 @@
   import ErrorPanel from "./lib/components/ErrorPanel.svelte";
   import { overlayCount } from "./lib/components/overlay";
   import ChatsView from "./lib/views/chats/ChatsView.svelte";
+  import CallsView from "./lib/views/calls/CallsView.svelte";
+  import IncomingCallBanner from "./lib/components/IncomingCallBanner.svelte";
   import SearchView from "./lib/views/search/SearchView.svelte";
   import MediaView from "./lib/views/media/MediaView.svelte";
   import DocsView from "./lib/views/docs/DocsView.svelte";
@@ -56,7 +58,7 @@
       app.openSearch();
       return;
     }
-    if (e.altKey && !mod && /^Digit[1-8]$/.test(e.code)) {
+    if (e.altKey && !mod && /^Digit[1-9]$/.test(e.code)) {
       if (overlayCount() > 0) return;
       const v = VIEWS[Number(e.code.slice(5)) - 1];
       if (v) {
@@ -73,10 +75,12 @@
   <NavRail />
   <div class="flex min-w-0 flex-1 flex-col">
     <TopBar />
+    <IncomingCallBanner />
     <main class="min-h-0 flex-1" data-testid="view-{app.view}">
       {#key app.view}
         <svelte:boundary onerror={(e) => console.error(e)}>
           {#if app.view === "chats"}<ChatsView />
+          {:else if app.view === "calls"}<CallsView />
           {:else if app.view === "search"}<SearchView />
           {:else if app.view === "media"}<MediaView />
           {:else if app.view === "docs"}<DocsView />

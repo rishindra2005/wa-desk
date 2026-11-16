@@ -20,6 +20,7 @@
 
 pub mod app_db;
 pub mod bridge_ro;
+pub mod calls;
 pub mod chats;
 pub mod indexer;
 pub mod insights;
@@ -35,6 +36,8 @@ pub mod watcher;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_calls;
+#[cfg(test)]
 mod tests_v2;
 
 use std::path::PathBuf;
@@ -47,9 +50,9 @@ use wa_core::config::Paths;
 use wa_core::time::{epoch_to_rfc3339, now_epoch};
 use wa_core::traits::{AppStore, IncomingMessage, LinkRecord, LinkStore, MediaInfo, MessageStore};
 use wa_core::types::{
-    AutomationEvent, ChatQuery, ChatRef, ChatStats, ChatSummary, JobRecord, LinkItem, MediaItem,
-    MediaKind, MediaQuery, Message, MessagesQuery, Overview, Page, Rule, SearchHit, SearchQuery,
-    SearchResults, Settings,
+    AutomationEvent, CallQuery, CallRecord, ChatQuery, ChatRef, ChatStats, ChatSummary, JobRecord,
+    LinkItem, MediaItem, MediaKind, MediaQuery, Message, MessagesQuery, Overview, Page, Rule,
+    SearchHit, SearchQuery, SearchResults, Settings,
 };
 use wa_core::{AppError, Result};
 
@@ -181,6 +184,11 @@ impl Db {
     /// Chat list (see `chats`).
     pub fn list_chats(&self, q: &ChatQuery) -> Result<Page<ChatSummary>> {
         chats::list_chats(&self.core, q)
+    }
+
+    /// Call log, newest first; cursor `"ts:rowid"`. Empty without a `calls` table.
+    pub fn list_calls(&self, q: &CallQuery) -> Result<Page<CallRecord>> {
+        calls::list_calls(&self.core, q)
     }
 
     /// One chat summary; `NotFound` if there is no such chat row.

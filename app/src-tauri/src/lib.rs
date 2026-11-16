@@ -264,6 +264,8 @@ pub fn run() {
             commands::reveal_path,
             commands::send_message,
             commands::react,
+            commands::list_calls,
+            commands::reject_call,
             commands::mark_read,
             commands::connection_status,
             commands::reconnect,

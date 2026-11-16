@@ -181,6 +181,10 @@ pub trait BridgeApi: Send + Sync {
     async fn refresh_chats(&self) -> Result<RefreshStats> {
         unsupported()
     }
+    /// POST /api/call/reject: decline a ringing call. `Invalid` when it is no longer ringing.
+    async fn reject_call(&self, _call_id: &str, _caller_jid: &str) -> Result<()> {
+        unsupported()
+    }
 }
 
 // ---------- message data (read side of messages.db) ----------

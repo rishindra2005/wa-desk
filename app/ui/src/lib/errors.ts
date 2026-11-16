@@ -4,7 +4,7 @@ import type { AppError } from "./bindings/AppError";
 import type { ErrorKind } from "./bindings/ErrorKind";
 import { toAppError } from "./api";
 
-export type ViewId = "chats" | "search" | "media" | "docs" | "tools" | "automations" | "system" | "settings";
+export type ViewId = "chats" | "calls" | "search" | "media" | "docs" | "tools" | "automations" | "system" | "settings";
 
 export interface FriendlyError {
   title: string;

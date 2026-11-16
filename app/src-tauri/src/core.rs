@@ -32,11 +32,11 @@ use wa_core::traits::{
     ProgressSink,
 };
 use wa_core::types::{
-    AutomationEvent, ChatQuery, ChatStats, ChatSummary, ConnectionState, DbChangedEvent, Issue,
-    JobRecord, JobSpec, LinkItem, LogFilter, LogLine, MediaItem, MediaKind, MediaQuery, MediaRef,
-    MediaSource, Message, MessagesQuery, NewMessagesEvent, Overview, Page, PreviewKind, PreviewRef,
-    ReactReq, Rule, RuleEval, SearchHit, SearchQuery, SearchResults, SendReq, SendResult, Settings,
-    events,
+    AutomationEvent, CallMedia, CallQuery, CallRecord, CallResult, ChatQuery, ChatStats,
+    ChatSummary, ConnectionState, DbChangedEvent, Issue, JobRecord, JobSpec, LinkItem, LogFilter,
+    LogLine, MediaItem, MediaKind, MediaQuery, MediaRef, MediaSource, Message, MessagesQuery,
+    NewMessagesEvent, Overview, Page, PreviewKind, PreviewRef, ReactReq, Rule, RuleEval, SearchHit,
+    SearchQuery, SearchResults, SendReq, SendResult, Settings, events,
 };
 use wa_core::{AppError, ErrorKind, Result};
 use wa_db::Db;
@@ -365,6 +365,40 @@ impl AppCore {
     pub async fn list_chats(&self, query: ChatQuery) -> Result<Page<ChatSummary>> {
         let db = self.db.clone();
         blocking(move || db.list_chats(&query)).await
+    }
+
+    /// `list_calls`: the call log (newest first).
+    pub async fn list_calls(&self, query: CallQuery) -> Result<Page<CallRecord>> {
+        let db = self.db.clone();
+        blocking(move || db.list_calls(&query)).await
+    }
+
+    /// `reject_call`: decline a ringing incoming call. `Invalid` when it is not ringing.
+    pub async fn reject_call(&self, call_id: String, caller_jid: String) -> Result<()> {
+        self.writable()?;
+        require("call", &call_id)?;
+        require("caller", &caller_jid)?;
+        let db = self.db.clone();
+        let id = call_id.clone();
+        let ringing = blocking(move || {
+            let page = db.list_calls(&CallQuery {
+                limit: Some(100),
+                ..Default::default()
+            })?;
+            Ok(page
+                .items
+                .into_iter()
+                .find(|c| c.call_id == id)
+                .is_some_and(|c| c.result == CallResult::InProgress && !c.is_from_me))
+        })
+        .await?;
+        if !ringing {
+            return Err(AppError::invalid("That call is no longer ringing"));
+        }
+        self.bridge
+            .reject_call(&call_id, &caller_jid)
+            .await
+            .map_err(|e| friendly_bridge(e, "the call was not declined"))
     }
 
     /// `get_chat`.
@@ -1039,6 +1073,8 @@ impl AppCore {
                 },
             );
         }
+        let settings = self.get_settings().await.unwrap_or_default();
+        self.handle_calls(&out.calls, &settings);
         if out.new.is_empty() {
             return Ok(0);
         }
@@ -1058,7 +1094,6 @@ impl AppCore {
                 count: out.new.len() as u32,
             },
         );
-        let settings = self.get_settings().await.unwrap_or_default();
         if settings.automation_enabled
             && !self.automation_paused()
             && !self.read_only.load(Ordering::SeqCst)
@@ -1073,6 +1108,19 @@ impl AppCore {
             self.notify_new(&out.new).await;
         }
         Ok(out.new.len())
+    }
+
+    /// Emit `call:update` for each changed call and notify about ringing / missed ones.
+    fn handle_calls(&self, calls: &[CallRecord], settings: &Settings) {
+        for c in calls {
+            emit_typed(&*self.emitter, events::CALL_UPDATE, c);
+            if !settings.desktop_notifications || self.platform.main_window_focused() {
+                continue;
+            }
+            if let Some((title, body)) = call_notification(c) {
+                self.platform.notify(&title, &body);
+            }
+        }
     }
 
     async fn notify_new(&self, new: &[IncomingMessage]) {
@@ -1307,6 +1355,36 @@ fn should_notify(m: &IncomingMessage, me: &[String]) -> bool {
         return wa_automation::rules::mentions_me(&msg.content, me);
     }
     true
+}
+
+/// Notification for a ringing incoming call or a call that just became missed.
+fn call_notification(c: &CallRecord) -> Option<(String, String)> {
+    if c.is_from_me {
+        return None;
+    }
+    let (icon, kind) = match c.media {
+        CallMedia::Voice => ("📞", "Voice"),
+        CallMedia::Video => ("📹", "Video"),
+    };
+    match c.result {
+        CallResult::InProgress => {
+            let title = if c.is_group {
+                format!("👥 Group call in {}", c.chat_name)
+            } else {
+                format!("{icon} {kind} call from {}", c.caller_name)
+            };
+            Some((title, "Answer on your phone".into()))
+        }
+        CallResult::Missed => {
+            let who = if c.is_group {
+                format!("in {}", c.chat_name)
+            } else {
+                format!("from {}", c.caller_name)
+            };
+            Some((format!("{icon} Missed {} call", kind.to_lowercase()), who))
+        }
+        _ => None,
+    }
 }
 
 fn notification_text(m: &IncomingMessage) -> (String, String) {
