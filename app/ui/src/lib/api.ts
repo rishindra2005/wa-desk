@@ -113,6 +113,11 @@ export async function call<T>(cmd: string, args?: InvokeArgs): Promise<T> {
 
 export const overview = () => call<Overview>("overview");
 export const listChats = (query: ChatQuery) => call<Page<ChatSummary>>("list_chats", { query });
+export const archiveCount = () => call<number>("archive_count");
+export const setArchived = (jid: string, archived: boolean) => call<void>("set_archived", { jid, archived });
+export const setPinned = (jid: string, pinned: boolean) => call<void>("set_pinned", { jid, pinned });
+export const setMuted = (jid: string, until: number | null) => call<void>("set_muted", { jid, until });
+export const resyncChatState = () => call<number>("resync_chat_state");
 export const getChat = (jid: string) => call<ChatSummary>("get_chat", { jid });
 export const listCalls = (query: CallQuery) => call<Page<CallRecord>>("list_calls", { query });
 export const rejectCall = (callId: string, callerJid: string) => call<void>("reject_call", { callId, callerJid });
@@ -169,7 +174,7 @@ export const COMMANDS = [
   "overview", "list_chats", "get_chat", "get_messages", "get_message_context", "search", "list_media",
   "ensure_media", "preview_doc", "open_media_external", "save_media_as", "open_path", "reveal_path", "get_profile",
   "chat_stats", "list_links", "set_starred", "list_starred", "export_chat", "forward_messages", "copy_messages_text",
-  "refresh_chat_names", "send_message", "react", "mark_read", "list_calls", "reject_call",
+  "refresh_chat_names", "archive_count", "set_archived", "set_pinned", "set_muted", "resync_chat_state", "send_message", "react", "mark_read", "list_calls", "reject_call",
   "connection_status", "reconnect", "start_job", "cancel_job", "list_jobs", "list_rules", "save_rule",
   "delete_rule", "test_rule", "automation_log", "set_automation_enabled", "query_logs", "list_issues",
   "resolve_issue", "clear_resolved_issues", "export_issue_bundle", "get_settings", "set_settings",

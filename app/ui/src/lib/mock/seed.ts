@@ -47,6 +47,10 @@ export interface MockChat {
   /** Real name a placeholder-named chat gets after "refresh names". */
   placeholder_for: string | null;
   unread: boolean;
+  archived: boolean;
+  pinned: boolean;
+  /** Epoch secs; -1 = forever; null = not muted (an expired value is also "not muted"). */
+  muted_until: number | null;
   /** Ascending by ts. */
   messages: Message[];
 }
@@ -433,10 +437,14 @@ export function generateSeed(nowSec: number = Math.floor(Date.now() / 1000), see
       name,
       is_group: gtype === "group" || gtype === "community",
       unread: (idx % 5 === 1 || idx === 3) && !!last,
+      archived: false,
+      pinned: false,
+      muted_until: null,
       messages: msgs,
     });
   });
   finishChats(chats, nowSec);
+  seedChatState(chats, nowSec);
 
   return {
     now: nowSec,
@@ -660,7 +668,7 @@ function baseChat(
   parent: ChatRef | null,
   g: Gen,
   created: number,
-): Omit<MockChat, "jid" | "name" | "is_group" | "unread" | "messages"> {
+): Omit<MockChat, "jid" | "name" | "is_group" | "unread" | "archived" | "pinned" | "muted_until" | "messages"> {
   const dad = entry.c?.name === "Dad";
   const hasAvatar = type === "channel" || type === "community" || entry.c?.name === "Ananya Rao" ? true : dad ? false : hashString(jid) % 4 !== 0;
   const sz = entry.size ?? (entry.name ? NAME_SIZES[entry.name] : undefined);
@@ -688,6 +696,20 @@ function phoneOf(i: number): string {
 
 function formatPhoneLite(d: string): string {
   return d.startsWith("91") && d.length === 12 ? `+91 ${d.slice(2, 7)} ${d.slice(7)}` : `+${d}`;
+}
+
+/** Archived / pinned / muted examples (one mute is already expired). */
+function seedChatState(chats: MockChat[], now: number): void {
+  const at = (i: number) => chats[i];
+  const set = (i: number, patch: Partial<Pick<MockChat, "archived" | "pinned" | "muted_until">>) => {
+    const c = at(i);
+    if (c) Object.assign(c, patch);
+  };
+  set(0, { pinned: true });
+  for (const i of [11, 14, 18]) set(i, { archived: true });
+  set(6, { muted_until: -1 });
+  set(8, { muted_until: now + 3 * 3600 });
+  set(9, { muted_until: now - 3600 });
 }
 
 /** Fill participants (real senders + synthetic members) and community sub-groups. */

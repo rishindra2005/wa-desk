@@ -172,7 +172,7 @@ class AppState {
 
   async refreshUnread(): Promise<void> {
     try {
-      const page = await api.listChats({ filter: null, kind: "all", unread_only: true, cursor: null, limit: 500 });
+      const page = await api.listChats({ filter: null, kind: "all", unread_only: true, archived: false, cursor: null, limit: 500 });
       this.unreadChats = page.items.length;
     } catch {
       /* ignore */

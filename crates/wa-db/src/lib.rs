@@ -21,6 +21,7 @@
 pub mod app_db;
 pub mod bridge_ro;
 pub mod calls;
+mod chat_state;
 pub mod chats;
 pub mod indexer;
 pub mod insights;
@@ -37,6 +38,8 @@ pub mod watcher;
 mod tests;
 #[cfg(test)]
 mod tests_calls;
+#[cfg(test)]
+mod tests_state;
 #[cfg(test)]
 mod tests_v2;
 
@@ -184,6 +187,16 @@ impl Db {
     /// Chat list (see `chats`).
     pub fn list_chats(&self, q: &ChatQuery) -> Result<Page<ChatSummary>> {
         chats::list_chats(&self.core, q)
+    }
+
+    /// Number of archived chats (for the "Archived" row).
+    pub fn archive_count(&self) -> Result<u32> {
+        chats::archive_count(&self.core)
+    }
+
+    /// Number of pinned (non-archived) chats, for the 3-pin limit.
+    pub fn pinned_count(&self) -> Result<u32> {
+        chats::pinned_count(&self.core)
     }
 
     /// Call log, newest first; cursor `"ts:rowid"`. Empty without a `calls` table.

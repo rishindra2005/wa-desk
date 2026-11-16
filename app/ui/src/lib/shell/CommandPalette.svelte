@@ -56,7 +56,7 @@
 
   const fetchChats = debounce(async (text: string) => {
     try {
-      const page = await api.listChats({ filter: text || null, kind: "all", unread_only: false, cursor: null, limit: text ? 8 : 5 });
+      const page = await api.listChats({ filter: text || null, kind: "all", unread_only: false, archived: false, cursor: null, limit: text ? 8 : 5 });
       chats = page.items;
     } catch {
       chats = [];

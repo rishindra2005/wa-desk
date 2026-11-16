@@ -12,6 +12,7 @@ use wa_core::{AppError, Result};
 
 use crate::Core;
 use crate::bridge_ro::{PAGE_ROWS, RoConn};
+use crate::chat_state::{self, ChatState};
 use crate::media::avatar_url;
 use crate::messages::{is_indexed_chat, sender_of};
 use crate::names::{NameCache, STATUS_JID, is_group_jid};
@@ -183,6 +184,7 @@ struct Candidate {
     last: Option<LastMsg>,
     name: String,
     sort_ts: Option<i64>,
+    state: ChatState,
 }
 
 fn candidates(
@@ -192,6 +194,7 @@ fn candidates(
     only: Option<&str>,
 ) -> Result<Vec<Candidate>> {
     let rows = load_chats(conn, only)?;
+    let states = chat_state::load(conn, names)?;
     let indexed = if core.index_ready()? && only.is_none() {
         Some(last_from_index(core, conn)?)
     } else {
@@ -212,6 +215,7 @@ fn candidates(
         let sort_ts = last.map(|l| l.ts).or(row.last_message_time);
         out.push(Candidate {
             chat_type: names.chat_type(&row.jid),
+            state: chat_state::of(&states, names, &row.jid),
             name: names.chat_name(&row.jid),
             row,
             last,
@@ -231,6 +235,9 @@ fn matches(c: &Candidate, q: &ChatQuery) -> bool {
         ChatKind::Broadcast => c.chat_type == ChatType::Broadcast,
     };
     if !ok {
+        return false;
+    }
+    if c.state.archived != q.archived {
         return false;
     }
     if q.unread_only && !unread_of(c) {
@@ -274,6 +281,7 @@ fn summarize(
         .collect();
     let receipts = crate::receipts::statuses(conn, &own)?;
     let _ = core;
+    let now = chat_state::now();
     Ok(cands
         .into_iter()
         .map(|c| {
@@ -295,6 +303,9 @@ fn summarize(
                 last_sender_name: last.map(|r| names.sender_name(&sender_of(r), r.is_from_me)),
                 last_is_from_me: c.last.is_some_and(|l| l.is_from_me),
                 unread,
+                archived: c.state.archived,
+                pinned: c.state.pinned,
+                muted_until: c.state.active_mute(now),
                 name: c.name,
                 jid: c.row.jid,
             }
@@ -313,9 +324,14 @@ pub(crate) fn list_chats(core: &Core, q: &ChatQuery) -> Result<Page<ChatSummary>
         .filter(|c| matches(c, q))
         .collect();
     cands.sort_by(|a, b| {
-        b.sort_ts
-            .unwrap_or(i64::MIN)
-            .cmp(&a.sort_ts.unwrap_or(i64::MIN))
+        b.state
+            .pinned
+            .cmp(&a.state.pinned)
+            .then_with(|| {
+                b.sort_ts
+                    .unwrap_or(i64::MIN)
+                    .cmp(&a.sort_ts.unwrap_or(i64::MIN))
+            })
             .then_with(|| a.row.jid.cmp(&b.row.jid))
     });
     let total = cands.len();
@@ -326,6 +342,28 @@ pub(crate) fn list_chats(core: &Core, q: &ChatQuery) -> Result<Page<ChatSummary>
         items,
         next_cursor: (next < total).then(|| encode_offset_cursor(next)),
     })
+}
+
+/// `archive_count`: archived chats (same set `list_chats` shows with `archived: true`).
+pub(crate) fn archive_count(core: &Core) -> Result<u32> {
+    let names = core.names.snapshot()?;
+    let conn = core.bridge.get()?;
+    let n = candidates(core, &conn, &names, None)?
+        .iter()
+        .filter(|c| c.state.archived)
+        .count();
+    Ok(u32::try_from(n).unwrap_or(u32::MAX))
+}
+
+/// Chats currently pinned (archived chats are never counted: archiving unpins).
+pub(crate) fn pinned_count(core: &Core) -> Result<u32> {
+    let names = core.names.snapshot()?;
+    let conn = core.bridge.get()?;
+    let n = candidates(core, &conn, &names, None)?
+        .iter()
+        .filter(|c| c.state.pinned && !c.state.archived)
+        .count();
+    Ok(u32::try_from(n).unwrap_or(u32::MAX))
 }
 
 /// `get_chat`: summary of one chat (any chat row, including status).

@@ -80,6 +80,17 @@ for (const scheme of ["light", "dark"] as const) {
     await page.screenshot({ path: `screenshots/profile-group-${scheme}.png` });
     await page.getByTestId("profile-close").click();
 
+    // Archived view.
+    await page.getByTestId("nav-chats").click();
+    await page.getByTestId("chat-filter").fill("");
+    await page.getByTestId("archived-row").click();
+    await expect(page.getByTestId("archived-title")).toBeVisible();
+    await expect(page.getByTestId("chat-row").first()).toBeVisible();
+    await page.mouse.move(1000, 30);
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `screenshots/archived-${scheme}.png` });
+    await page.getByTestId("archived-back").click();
+
     // Context menu on a message.
     await openChat(page, "Ananya Rao");
     await page.getByTestId("message").last().click({ button: "right", position: { x: 40, y: 10 } });

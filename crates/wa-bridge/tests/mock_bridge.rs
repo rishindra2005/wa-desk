@@ -72,6 +72,21 @@ async fn call_reject(State(m): State<Mock>, axum::Json(body): axum::Json<Value>)
     }
 }
 
+async fn chat_state_ok(State(m): State<Mock>, axum::Json(body): axum::Json<Value>) -> Response {
+    *m.last_body.lock() = body.clone();
+    match body["jid"].as_str().unwrap_or_default() {
+        "down@s.whatsapp.net" => {
+            (StatusCode::SERVICE_UNAVAILABLE, "disconnected\n").into_response()
+        }
+        "bad@s.whatsapp.net" => (StatusCode::BAD_GATEWAY, "whatsmeow said no\n").into_response(),
+        _ => axum::Json(json!({"success": true, "message": "ok"})).into_response(),
+    }
+}
+
+async fn resync() -> Response {
+    axum::Json(json!({"success": true, "changed": 3, "cached": true})).into_response()
+}
+
 async fn connection(State(m): State<Mock>) -> axum::Json<Value> {
     axum::Json(m.connection.lock().clone())
 }
@@ -244,6 +259,10 @@ impl Harness {
             .route("/api/react", post(ok_json))
             .route("/api/mark-read", post(ok_json))
             .route("/api/call/reject", post(call_reject))
+            .route("/api/chat/archive", post(chat_state_ok))
+            .route("/api/chat/pin", post(chat_state_ok))
+            .route("/api/chat/mute", post(chat_state_ok))
+            .route("/api/chats/resync-state", post(resync))
             .route("/api/health", get(health))
             .route("/api/profile", get(profile))
             .route("/api/group", get(group))
@@ -550,6 +569,52 @@ async fn reject_call_body_and_errors() {
 }
 
 #[tokio::test]
+async fn chat_state_bodies_and_errors() {
+    let h = Harness::start().await;
+    let c = h.client();
+    c.set_archived("91@s.whatsapp.net", true).await.unwrap();
+    let b = h.mock.last_body.lock().clone();
+    assert_eq!(b, json!({"jid": "91@s.whatsapp.net", "archived": true}));
+    c.set_pinned("g@g.us", false).await.unwrap();
+    let b = h.mock.last_body.lock().clone();
+    assert_eq!(b, json!({"jid": "g@g.us", "pinned": false}));
+    c.set_muted("91@s.whatsapp.net", Some(-1)).await.unwrap();
+    assert_eq!(h.mock.last_body.lock()["until"], -1);
+    c.set_muted("91@s.whatsapp.net", None).await.unwrap();
+    assert!(h.mock.last_body.lock()["until"].is_null());
+    let future = wa_core::time::now_epoch() + 3600;
+    c.set_muted("91@s.whatsapp.net", Some(future))
+        .await
+        .unwrap();
+    assert_eq!(h.mock.last_body.lock()["until"], future);
+    // Local validation never reaches the bridge.
+    for e in [
+        c.set_muted("91@s.whatsapp.net", Some(1000)).await,
+        c.set_muted("91@s.whatsapp.net", Some(0)).await,
+        c.set_archived("nojid", true).await,
+        c.set_pinned("", true).await,
+    ] {
+        assert_eq!(e.unwrap_err().kind, ErrorKind::Invalid);
+    }
+    assert_eq!(
+        c.set_archived("down@s.whatsapp.net", true)
+            .await
+            .unwrap_err()
+            .kind,
+        ErrorKind::BridgeDown
+    );
+    assert_eq!(
+        c.set_pinned("bad@s.whatsapp.net", true)
+            .await
+            .unwrap_err()
+            .kind,
+        ErrorKind::External
+    );
+    let r = c.resync_chat_state().await.unwrap();
+    assert_eq!((r.changed, r.cached), (3, true));
+}
+
+#[tokio::test]
 async fn refused_port_is_bridge_down_and_unreachable() {
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = l.local_addr().unwrap().port();
@@ -677,6 +742,14 @@ async fn missing_endpoints_are_not_found() {
     );
     assert_eq!(
         c.avatar("1@g.us", false).await.unwrap_err().kind,
+        ErrorKind::NotFound
+    );
+    assert_eq!(
+        c.resync_chat_state().await.unwrap_err().kind,
+        ErrorKind::NotFound
+    );
+    assert_eq!(
+        c.set_archived("1@g.us", true).await.unwrap_err().kind,
         ErrorKind::NotFound
     );
 }

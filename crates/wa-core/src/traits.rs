@@ -126,6 +126,16 @@ pub struct RefreshStats {
     pub cached: bool,
 }
 
+/// `POST /api/chats/resync-state`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct ResyncStats {
+    /// Chats whose archive/pin/mute state differs after the resync.
+    pub changed: u32,
+    /// True when the bridge answered from its 5 minute cache.
+    pub cached: bool,
+}
+
 fn unsupported<T>() -> Result<T> {
     Err(crate::error::AppError::not_found(
         "This bridge does not support that request",
@@ -179,6 +189,22 @@ pub trait BridgeApi: Send + Sync {
     }
     /// POST /api/chats/refresh: names/types of groups, communities, channels.
     async fn refresh_chats(&self) -> Result<RefreshStats> {
+        unsupported()
+    }
+    /// POST /api/chats/resync-state: replay archive/pin/mute app state.
+    async fn resync_chat_state(&self) -> Result<ResyncStats> {
+        unsupported()
+    }
+    /// POST /api/chat/archive.
+    async fn set_archived(&self, _jid: &str, _archived: bool) -> Result<()> {
+        unsupported()
+    }
+    /// POST /api/chat/pin.
+    async fn set_pinned(&self, _jid: &str, _pinned: bool) -> Result<()> {
+        unsupported()
+    }
+    /// POST /api/chat/mute: `until` epoch secs, `-1` forever, `None` unmute.
+    async fn set_muted(&self, _jid: &str, _until: Option<i64>) -> Result<()> {
         unsupported()
     }
     /// POST /api/call/reject: decline a ringing call. `Invalid` when it is no longer ringing.

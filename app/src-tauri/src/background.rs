@@ -105,6 +105,20 @@ async fn run_loop<F, Fut>(
     tracing::info!(task = name, "background loop stopped");
 }
 
+/// Delay before the one-time chat-state resync (after the first name refresh).
+pub const RESYNC_STATE_FIRST: Duration = Duration::from_secs(12);
+
+/// Replay archive/pin/mute state once at startup, after the name refresh.
+async fn resync_state_once(core: Arc<AppCore>, shutdown: CancellationToken) {
+    tokio::select! {
+        _ = shutdown.cancelled() => return,
+        _ = tokio::time::sleep(RESYNC_STATE_FIRST) => {}
+    }
+    if let Err(e) = guarded(async move { core.resync_state_tick().await }).await {
+        tracing::warn!(error = %e, "chat state resync failed");
+    }
+}
+
 /// Start every background loop on the current Tokio runtime.
 pub fn spawn_all(core: Arc<AppCore>, shutdown: CancellationToken) {
     let sd = shutdown.clone();
@@ -156,6 +170,7 @@ pub fn spawn_all(core: Arc<AppCore>, shutdown: CancellationToken) {
         shutdown.clone(),
         |c| async move { c.refresh_names_tick().await },
     ));
+    tokio::spawn(resync_state_once(core.clone(), shutdown.clone()));
     tokio::spawn(warm_loop(core.clone(), shutdown.clone()));
     tokio::spawn(run_loop(
         core,

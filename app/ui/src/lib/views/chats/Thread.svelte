@@ -28,6 +28,7 @@
   import { toasts } from "../../state/toasts.svelte";
   import { app } from "../../state/app.svelte";
   import { ctxMenu } from "../../state/menu.svelte";
+  import { chatState } from "../../state/chatstate.svelte";
   import { overlayCount } from "../../components/overlay";
   import { debounce, copyText } from "../../utils/misc";
   import { applyClick, inOrder } from "../../utils/selection";
@@ -614,6 +615,8 @@
     return [
       { id: "info", label: chat.chat_type === "direct" ? "Contact info" : "Group info", icon: Info, onselect: () => app.openProfile(chat.jid) },
       { id: "search", label: "Search in chat", icon: Search, onselect: () => app.searchInChat(chat.jid) },
+      ...chatState.menuItems(chat),
+      { id: "sep0", separator: true },
       { id: "select", label: "Select messages", icon: ListChecks, onselect: () => startSelect() },
       { id: "export", label: "Export chat…", icon: FileDown, onselect: () => app.openExport(chat.jid, title) },
       { id: "sep", separator: true },

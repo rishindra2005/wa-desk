@@ -35,6 +35,8 @@ pub struct Mock {
     pub slow_avatars: Arc<Mutex<Vec<String>>>,
     /// When true the metadata endpoints answer 503 (disconnected).
     pub meta_down: Arc<Mutex<bool>>,
+    /// `changed` answered by /api/chats/resync-state.
+    pub resync_changed: Arc<Mutex<u32>>,
 }
 
 impl Mock {
@@ -230,6 +232,15 @@ async fn refresh(State(m): State<Mock>) -> Response {
     .into_response()
 }
 
+async fn resync(State(m): State<Mock>) -> Response {
+    record(&m, "/api/chats/resync-state", Value::Null);
+    if *m.meta_down.lock() {
+        return down();
+    }
+    let changed = *m.resync_changed.lock();
+    axum::Json(json!({"success": true, "changed": changed, "cached": false})).into_response()
+}
+
 /// Start the mock on a random port; returns (base url, mock).
 pub async fn start_mock() -> (String, Mock) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -251,6 +262,10 @@ pub async fn start_mock() -> (String, Mock) {
         .route("/api/newsletter", get(newsletter))
         .route("/api/avatar", get(avatar))
         .route("/api/chats/refresh", post(refresh))
+        .route("/api/chats/resync-state", post(resync))
+        .route("/api/chat/archive", post(ok))
+        .route("/api/chat/pin", post(ok))
+        .route("/api/chat/mute", post(ok))
         .layer(middleware::from_fn_with_state(m.clone(), guard))
         .with_state(m.clone());
     tokio::spawn(async move {

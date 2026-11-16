@@ -25,7 +25,7 @@
 
   async function load(q: string) {
     try {
-      const p = await api.listChats({ filter: q || null, kind: "all", unread_only: false, cursor: null, limit: 80 });
+      const p = await api.listChats({ filter: q || null, kind: "all", unread_only: false, archived: false, cursor: null, limit: 80 });
       chats = p.items.filter((c) => c.chat_type !== "channel");
       for (const c of p.items) names.set(c.jid, chatLabel(c));
     } catch (e) {

@@ -11,6 +11,8 @@ class CtxMenu {
   /** Element to restore focus to on close. */
   returnTo: HTMLElement | null = null;
   label = $state("Context menu");
+  /** Parent levels (items + label) while a submenu is showing. */
+  stack = $state<{ items: MenuItem[]; label: string }[]>([]);
 
   open(items: MenuItem[], x: number, y: number, label = "Context menu"): void {
     const t = tidyItems(items);
@@ -20,7 +22,25 @@ class CtxMenu {
     this.x = x;
     this.y = y;
     this.label = label;
+    this.stack = [];
     this.isOpen = true;
+  }
+
+  /** Show a nested list in place of the current one. */
+  enter(items: MenuItem[], label: string): void {
+    this.stack = [...this.stack, { items: this.items, label: this.label }];
+    this.items = tidyItems(items);
+    this.label = label;
+  }
+
+  /** Back to the parent list; false when already at the top level. */
+  back(): boolean {
+    const top = this.stack[this.stack.length - 1];
+    if (!top) return false;
+    this.stack = this.stack.slice(0, -1);
+    this.items = top.items;
+    this.label = top.label;
+    return true;
   }
 
   /** Open anchored to an element's bottom-left (keyboard and button triggers). */

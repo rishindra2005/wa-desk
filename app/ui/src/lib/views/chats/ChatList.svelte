@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Search, MessageSquare, Users, MoreVertical, ChevronDown, CheckCheck, Info, FileDown, Copy, MessageCircle, RefreshCw, Megaphone, Radio, Network } from "@lucide/svelte";
+  import { Search, MessageSquare, Users, MoreVertical, ChevronDown, CheckCheck, Info, FileDown, Copy, MessageCircle, RefreshCw, Megaphone, Radio, Network, Archive, ArrowLeft, Pin, BellOff, ChevronRight } from "@lucide/svelte";
   import * as api from "../../api";
   import type { ChatSummary } from "../../bindings/ChatSummary";
   import type { ChatKind } from "../../bindings/ChatKind";
@@ -16,6 +16,8 @@
   import { copyText } from "../../utils/misc";
   import { toasts } from "../../state/toasts.svelte";
   import { debounce } from "../../utils/misc";
+  import { chatState } from "../../state/chatstate.svelte";
+  import { isMuted, sortChats } from "../../utils/chatstate";
 
   interface Props {
     selected: string | null;
@@ -31,6 +33,11 @@
   let error = $state<unknown>(null);
   let now = $state(Date.now());
   let seq = 0;
+  /** Showing the Archived list instead of the main list. */
+  let archivedView = $state(false);
+  const nowSec = $derived(Math.floor(now / 1000));
+  /** Server data with optimistic patches, pinned first. */
+  const shown = $derived(sortChats(chats.map((c) => chatState.apply(c)).filter((c) => c.archived === archivedView)));
 
   async function load() {
     const my = ++seq;
@@ -38,7 +45,7 @@
       const all: ChatSummary[] = [];
       let cursor: string | null = null;
       do {
-        const page = await api.listChats({ filter: filter.trim() || null, kind, unread_only: unreadOnly, cursor, limit: 500 });
+        const page = await api.listChats({ filter: filter.trim() || null, kind, unread_only: unreadOnly, archived: archivedView, cursor, limit: 500 });
         all.push(...page.items);
         cursor = page.next_cursor;
       } while (cursor && all.length < 5000);
@@ -46,6 +53,8 @@
       chats = all;
       error = null;
       now = Date.now();
+      chatState.settle();
+      void chatState.refreshArchiveCount();
     } catch (e) {
       if (my === seq) error = e;
     } finally {
@@ -60,6 +69,7 @@
     void filter;
     void kind;
     void unreadOnly;
+    void archivedView;
     reload();
   });
 
@@ -73,6 +83,11 @@
       clearInterval(t);
       reload.cancel();
     };
+  });
+
+  // Leave the archive view once it is empty.
+  $effect(() => {
+    if (archivedView && chatState.archiveCount === 0) archivedView = false;
   });
 
   /** Mark a chat read locally (the parent calls mark_read). */
@@ -107,6 +122,8 @@
       { id: "info", label: c.chat_type === "direct" ? "Contact info" : c.chat_type === "channel" ? "Channel info" : "Group info", icon: Info, onselect: () => app.openProfile(c.jid) },
       { id: "search", label: "Search in chat", icon: Search, onselect: () => app.searchInChat(c.jid) },
       { id: "export", label: "Export chat…", icon: FileDown, onselect: () => app.openExport(c.jid, chatLabel(c)) },
+      { id: "sep0", separator: true },
+      ...chatState.menuItems(c),
       { id: "sep", separator: true },
       { id: "jid", label: "Copy JID", icon: Copy, onselect: () => void copyText(c.jid).then((ok) => ok && toasts.success("JID copied")) },
     ];
@@ -121,14 +138,20 @@
   function onListKey(e: KeyboardEvent) {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     e.preventDefault();
-    const i = chats.findIndex((c) => c.jid === selected);
-    const next = chats[Math.max(0, Math.min(chats.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))];
+    const i = shown.findIndex((c) => c.jid === selected);
+    const next = shown[Math.max(0, Math.min(shown.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))];
     if (next) onselect(next);
   }
 </script>
 
 <section class="flex h-full min-h-0 flex-col" aria-label="Chat list">
   <div class="space-y-2 border-b border-border p-3">
+    {#if archivedView}
+      <div class="flex items-center gap-2">
+        <button class="icon-btn h-7 w-7" aria-label="Back to chats" onclick={() => (archivedView = false)} data-testid="archived-back"><ArrowLeft size={16} /></button>
+        <h2 class="text-[14px] font-semibold" data-testid="archived-title">Archived</h2>
+      </div>
+    {/if}
     <div class="relative">
       <Search size={14} class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
       <input class="input pl-8" placeholder="Filter chats" aria-label="Filter chats" bind:value={filter} data-testid="chat-filter" />
@@ -146,15 +169,29 @@
     </div>
   </div>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="min-h-0 flex-1" onkeydown={onListKey}>
+  <div class="flex min-h-0 flex-1 flex-col" onkeydown={onListKey}>
+    {#if !archivedView && chatState.archiveCount > 0 && !filter.trim()}
+      <button
+        class="flex h-12 w-full shrink-0 items-center gap-3 border-b border-border px-3 text-left hover:bg-surface-2"
+        onclick={() => (archivedView = true)}
+        aria-label="Archived chats, {chatState.archiveCount}"
+        data-testid="archived-row"
+      >
+        <span class="flex h-[42px] w-[42px] shrink-0 items-center justify-center text-muted"><Archive size={18} /></span>
+        <span class="flex-1 text-[14px] font-medium">Archived</span>
+        <span class="text-[12px] text-faint" data-testid="archived-count">{chatState.archiveCount}</span>
+        <ChevronRight size={14} class="text-faint" />
+      </button>
+    {/if}
+    <div class="min-h-0 flex-1">
     {#if loading && chats.length === 0}
       <Skeleton rows={9} avatar />
     {:else if error && chats.length === 0}
       <ErrorPanel {error} reset={() => void load()} />
-    {:else if chats.length === 0}
-      <EmptyState icon={filter ? Search : unreadOnly ? MessageSquare : Users} title={filter ? "No chats match" : unreadOnly ? "All caught up" : "No chats yet"} message={filter ? `Nothing matches “${filter}”.` : undefined} />
+    {:else if shown.length === 0}
+      <EmptyState icon={filter ? Search : unreadOnly ? MessageSquare : Users} title={filter ? "No chats match" : unreadOnly ? "All caught up" : archivedView ? "No archived chats" : "No chats yet"} message={filter ? `Nothing matches “${filter}”.` : undefined} />
     {:else}
-      <VirtualList items={chats} getKey={(c) => c.jid} estimate={64} class="h-full" ariaLabel="Chats">
+      <VirtualList items={shown} getKey={(c) => c.jid} estimate={64} class="h-full" ariaLabel="Chats">
         {#snippet row(c: ChatSummary)}
           {@const label = chatLabel(c)}
           <div class="group/row relative">
@@ -184,7 +221,9 @@
                   <span class="min-w-0 flex-1 truncate text-[13px] {c.unread ? 'text-fg' : 'text-muted'}">
                     {#if c.last_is_from_me}<span class="text-faint">{c.is_group ? "You: " : ""}</span>{:else if c.is_group && c.last_sender_name}<span class="text-faint">{c.last_sender_name + ": "}</span>{/if}{c.last_preview ?? ""}
                   </span>
-                  {#if c.unread}<span class="h-2.5 w-2.5 shrink-0 rounded-full bg-accent" aria-label="Unread" data-testid="unread-dot"></span>{/if}
+                  {#if isMuted(c.muted_until, nowSec)}<BellOff size={13} class="shrink-0 text-faint" aria-label="Muted" data-testid="muted-icon" />{/if}
+                  {#if c.pinned}<Pin size={13} class="shrink-0 text-faint" aria-label="Pinned" data-testid="pinned-icon" />{/if}
+                  {#if c.unread}<span class="h-2.5 w-2.5 shrink-0 rounded-full {isMuted(c.muted_until, nowSec) ? 'bg-faint' : 'bg-accent'}" aria-label={isMuted(c.muted_until, nowSec) ? "Unread (muted)" : "Unread"} data-testid="unread-dot" data-muted={isMuted(c.muted_until, nowSec)}></span>{/if}
                 </div>
               </div>
             </button>
@@ -199,5 +238,6 @@
         {/snippet}
       </VirtualList>
     {/if}
+    </div>
   </div>
 </section>
