@@ -305,6 +305,13 @@ impl AppCore {
     /// Local avatar file for the protocol handler. Never waits on the bridge
     /// for more than [`AVATAR_WAIT`]; `NotFound` when there is no picture.
     pub async fn avatar_file(&self, jid: &str, full: bool) -> Result<PathBuf> {
+        if matches!(
+            ChatType::from_jid(jid),
+            ChatType::Status | ChatType::Broadcast
+        ) {
+            // These never have a picture; don't make the UI wait for the bridge.
+            return Err(AppError::not_found("no picture"));
+        }
         let key = (jid.to_string(), full);
         let cached = self.caches.avatars.lock().get(&key).cloned();
         match cached {
