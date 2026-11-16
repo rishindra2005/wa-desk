@@ -41,7 +41,7 @@ describe("commands", () => {
     for (const cmd of api.COMMANDS) {
       try {
         await b.handle(cmd, {
-          query: { filter: null, kind: "all", unread_only: false, cursor: null, limit: 1, chat_jid: b.chats[0]?.jid, before: null, text: "a", chat_jids: [], senders: [], media_kinds: [], from_me: null, after: null, offset: null, kinds: [], available: null },
+          query: { filter: null, kind: "all", unread_only: false, archived: false, cursor: null, limit: 1, chat_jid: b.chats[0]?.jid, before: null, text: "a", chat_jids: [], senders: [], media_kinds: [], from_me: null, after: null, offset: null, kinds: [], available: null },
           jid: b.chats[0]?.jid, chatJid: b.chats[0]?.jid, messageId: "x", radius: 1, limit: 1, id: 999, ids: null, enabled: false,
           filter: { level: null, contains: null, target: null, since: null, limit: 1 }, settings: b.settings,
           spec: { type: "reindex" }, rule: { name: "" }, sample: {}, req: { recipient: b.chats[0]?.jid, text: "x" }, dest: "/x",
@@ -53,16 +53,57 @@ describe("commands", () => {
   });
 
   it("lists chats newest first with filters", async () => {
-    const all = await api.listChats({ filter: null, kind: "all", unread_only: false, cursor: null, limit: 500 });
+    const all = await api.listChats({ filter: null, kind: "all", unread_only: false, archived: false, cursor: null, limit: 500 });
     const ts = all.items.map((c) => c.last_message_ts ?? 0);
     expect([...ts].sort((x, y) => y - x)).toEqual(ts);
-    const groups = await api.listChats({ filter: null, kind: "group", unread_only: false, cursor: null, limit: 500 });
-    expect(groups.items.length).toBe(17);
+    const groups = await api.listChats({ filter: null, kind: "group", unread_only: false, archived: false, cursor: null, limit: 500 });
+    expect(groups.items.length).toBe(15); // 2 groups are archived
     expect(groups.items.every((c) => c.is_group)).toBe(true);
-    const f = await api.listChats({ filter: "राहुल", kind: "all", unread_only: false, cursor: null, limit: 10 });
+    const f = await api.listChats({ filter: "राहुल", kind: "all", unread_only: false, archived: false, cursor: null, limit: 10 });
     expect(f.items.map((c) => c.name)).toContain("राहुल शर्मा");
-    const page = await api.listChats({ filter: null, kind: "all", unread_only: false, cursor: null, limit: 10 });
+    const page = await api.listChats({ filter: null, kind: "all", unread_only: false, archived: false, cursor: null, limit: 10 });
     expect(page.next_cursor).toBe("10");
+  });
+
+  it("hides archived chats from the main list and lists them with archived=true", async () => {
+    const q = { filter: null, kind: "all" as const, unread_only: false, cursor: null, limit: 500 };
+    const main = await api.listChats({ ...q, archived: false });
+    const arch = await api.listChats({ ...q, archived: true });
+    expect(main.items.some((c) => c.archived)).toBe(false);
+    expect(arch.items.length).toBeGreaterThan(0);
+    expect(arch.items.every((c) => c.archived)).toBe(true);
+    expect(main.items.length + arch.items.length).toBe(b.chats.length);
+    expect(await api.archiveCount()).toBe(arch.items.length);
+    const jid = arch.items[0]!.jid;
+    await api.setArchived(jid, false);
+    expect(await api.archiveCount()).toBe(arch.items.length - 1);
+    expect((await api.listChats({ ...q, archived: false })).items.some((c) => c.jid === jid)).toBe(true);
+  });
+
+  it("sorts pinned chats first and enforces the 3-pin limit", async () => {
+    const q = { filter: null, kind: "all" as const, unread_only: false, archived: false, cursor: null, limit: 500 };
+    const jids = (await api.listChats(q)).items.map((c) => c.jid);
+    const already = b.chats.filter((c) => c.pinned).length;
+    const extra = jids.filter((j) => !b.chats.find((c) => c.jid === j)!.pinned).slice(10, 10 + (3 - already));
+    for (const j of extra) await api.setPinned(j, true);
+    const top = (await api.listChats(q)).items.slice(0, 3);
+    expect(top.every((c) => c.pinned)).toBe(true);
+    const fourth = jids.find((j) => !b.chats.find((c) => c.jid === j)!.pinned)!;
+    await expect(api.setPinned(fourth, true)).rejects.toMatchObject({ message: "You can only pin up to 3 chats" });
+    await api.setPinned(extra[0]!, false);
+    await api.setPinned(fourth, true);
+    expect(b.chats.filter((c) => c.pinned).length).toBe(3);
+  });
+
+  it("stores mute state, including an expired seed mute", async () => {
+    const muted = b.chats.filter((c) => c.muted_until !== null);
+    expect(muted.some((c) => c.muted_until === -1)).toBe(true);
+    expect(muted.some((c) => c.muted_until !== null && c.muted_until > 0 && c.muted_until < NOW)).toBe(true);
+    const jid = b.chats[20]!.jid;
+    await api.setMuted(jid, NOW + 100);
+    expect((await api.getChat(jid)).muted_until).toBe(NOW + 100);
+    await api.setMuted(jid, null);
+    expect((await api.getChat(jid)).muted_until).toBeNull();
   });
 
   it("pages messages backwards in ascending order", async () => {

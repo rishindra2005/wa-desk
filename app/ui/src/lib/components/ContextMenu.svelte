@@ -1,6 +1,7 @@
 <!-- Renders the global context menu: keyboard navigable, closes on Esc / outside click, viewport-clamped. -->
 <script lang="ts">
   import { tick } from "svelte";
+  import { ChevronRight } from "@lucide/svelte";
   import { ctxMenu } from "../state/menu.svelte";
   import { clampPosition, nextIndex } from "../utils/menu";
 
@@ -25,6 +26,12 @@
   function choose(i: number) {
     const it = ctxMenu.items[i];
     if (!it || it.disabled || it.separator) return;
+    if (it.submenu) {
+      ctxMenu.enter(it.submenu, it.label ?? "Submenu");
+      active = nextIndex(ctxMenu.items, -1, 1);
+      el?.focus({ preventScroll: true });
+      return;
+    }
     ctxMenu.close();
     it.onselect?.();
   }
@@ -34,6 +41,11 @@
     if (k === "Escape") ctxMenu.close();
     else if (k === "ArrowDown") active = nextIndex(ctxMenu.items, active, 1);
     else if (k === "ArrowUp") active = nextIndex(ctxMenu.items, active, -1);
+    else if (k === "ArrowRight" && ctxMenu.items[active]?.submenu) choose(active);
+    else if (k === "ArrowLeft" && ctxMenu.back()) {
+      active = nextIndex(ctxMenu.items, -1, 1);
+      el?.focus({ preventScroll: true });
+    }
     else if (k === "Home") active = nextIndex(ctxMenu.items, -1, 1);
     else if (k === "End") active = nextIndex(ctxMenu.items, 0, -1);
     else if (k === "Enter" || k === " ") choose(active);
@@ -73,12 +85,14 @@
           disabled={it.disabled}
           tabindex="-1"
           data-testid="menu-{it.id}"
+          aria-haspopup={it.submenu ? "menu" : undefined}
           onpointerenter={() => !it.disabled && (active = i)}
           onclick={() => choose(i)}
         >
           <span class="flex w-4 shrink-0 justify-center text-muted">{#if Icon}<Icon size={15} />{/if}</span>
           <span class="min-w-0 flex-1 truncate">{it.label}</span>
           {#if it.hint}<span class="text-[11px] text-faint">{it.hint}</span>{/if}
+          {#if it.submenu}<ChevronRight size={14} class="text-faint" aria-hidden="true" />{/if}
         </button>
       {/if}
     {/each}

@@ -10,6 +10,8 @@ export interface MenuItem {
   disabled?: boolean;
   separator?: boolean;
   onselect?: () => void;
+  /** Opens a nested list in the same menu (Enter / click / ArrowRight; ArrowLeft goes back). */
+  submenu?: MenuItem[];
 }
 
 /** Place a `w`×`h` menu at (x, y), flipping/shifting so it stays inside the viewport. */

@@ -33,6 +33,7 @@ import type { SearchQuery } from "../bindings/SearchQuery";
 import type { SearchResults } from "../bindings/SearchResults";
 import type { SendReq } from "../bindings/SendReq";
 import type { Settings } from "../bindings/Settings";
+import { MAX_PINS, sortChats } from "../utils/chatstate";
 import type { EventMap, EventName } from "../api";
 import type { ChatRef } from "../bindings/ChatRef";
 import type { ChatStats } from "../bindings/ChatStats";
@@ -202,6 +203,27 @@ export class MockBackend {
     switch (cmd) {
       case "overview": return this.overview();
       case "list_chats": return this.listChats((a as { query: ChatQuery }).query);
+      case "archive_count": return this.chats.filter((c) => c.archived).length;
+      case "set_archived": {
+        const { jid, archived } = a as { jid: string; archived: boolean };
+        const c = this.chat(jid);
+        c.archived = archived;
+        if (archived) c.pinned = false;
+        this.emit("db:changed", { chat_jids: [c.jid] });
+        return null;
+      }
+      case "set_pinned": {
+        const { jid, pinned } = a as { jid: string; pinned: boolean };
+        return this.setPinned(jid, pinned);
+      }
+      case "set_muted": {
+        const { jid, until } = a as { jid: string; until: number | null };
+        const c = this.chat(jid);
+        c.muted_until = until;
+        this.emit("db:changed", { chat_jids: [c.jid] });
+        return null;
+      }
+      case "resync_chat_state": return 0;
       case "get_chat": return this.summary(this.chat((a as { jid: string }).jid));
       case "list_calls": return this.listCalls((a as { query: CallQuery }).query);
       case "reject_call": {
@@ -359,6 +381,9 @@ export class MockBackend {
       last_sender_name: last ? (last.is_from_me ? "Me" : last.sender_name) : null,
       last_is_from_me: last?.is_from_me ?? false,
       unread: c.unread,
+      archived: c.archived,
+      pinned: c.pinned,
+      muted_until: c.muted_until,
     };
   }
 
@@ -367,10 +392,22 @@ export class MockBackend {
     let list = this.chats
       .filter((c) => (q.kind === "all" ? true : q.kind === "group" ? c.chat_type === "group" : c.chat_type === q.kind))
       .filter((c) => (q.unread_only ? c.unread : true))
+      .filter((c) => c.archived === q.archived)
       .filter((c) => !f || c.name.toLowerCase().includes(f) || c.jid.includes(f))
       .map((c) => this.summary(c));
-    list = list.sort((a, b) => (b.last_message_ts ?? 0) - (a.last_message_ts ?? 0));
+    list = sortChats(list);
     return paginate(list, q.cursor, clampLimit(q.limit, 100));
+  }
+
+  /** set_pinned with WhatsApp's 3-pin limit. */
+  private setPinned(jid: string, pinned: boolean): null {
+    const c = this.chat(jid);
+    if (pinned && !c.pinned && this.chats.filter((x) => x.pinned).length >= MAX_PINS) {
+      fail("invalid", `You can only pin up to ${MAX_PINS} chats`);
+    }
+    c.pinned = pinned;
+    this.emit("db:changed", { chat_jids: [c.jid] });
+    return null;
   }
 
   listCalls(q: CallQuery): Page<CallRecord> {

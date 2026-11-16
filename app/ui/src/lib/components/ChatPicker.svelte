@@ -29,7 +29,7 @@
 
   async function fetch(q: string) {
     try {
-      const page = await api.listChats({ filter: q || null, kind, unread_only: false, cursor: null, limit: 50 });
+      const page = await api.listChats({ filter: q || null, kind, unread_only: false, archived: false, cursor: null, limit: 50 });
       results = page.items;
       for (const c of page.items) names.set(c.jid, c.name);
       namesVersion++;
