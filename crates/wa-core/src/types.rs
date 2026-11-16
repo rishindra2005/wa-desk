@@ -922,6 +922,75 @@ pub struct ForwardReq {
     pub to: Vec<String>,
 }
 
+// ---------- calls ----------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CallMedia {
+    Voice,
+    Video,
+}
+
+/// Outcome as recorded by the bridge (`calls.result`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CallResult {
+    /// Ringing / ongoing right now.
+    InProgress,
+    Answered,
+    Ended,
+    Missed,
+    Rejected,
+}
+
+impl CallResult {
+    pub fn from_db(s: &str) -> Self {
+        match s {
+            "answered" => Self::Answered,
+            "ended" => Self::Ended,
+            "missed" => Self::Missed,
+            "rejected" => Self::Rejected,
+            _ => Self::InProgress,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CallRecord {
+    pub call_id: String,
+    /// Group JID for group calls, the caller for 1:1.
+    pub chat_jid: String,
+    pub chat_name: String,
+    pub caller_jid: String,
+    pub caller_name: String,
+    pub avatar_url: String,
+    pub is_from_me: bool,
+    pub is_group: bool,
+    pub media: CallMedia,
+    pub result: CallResult,
+    #[ts(type = "number")]
+    pub ts: i64,
+    pub duration_secs: Option<u32>,
+    #[ts(type = "number | null")]
+    pub ended_at: Option<i64>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CallQuery {
+    pub chat_jid: Option<String>,
+    /// Only missed (and rejected) calls.
+    #[serde(default)]
+    pub missed_only: bool,
+    pub media: Option<CallMedia>,
+    pub cursor: Option<String>,
+    pub limit: Option<u32>,
+}
+
 // ---------- settings ----------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -1017,6 +1086,8 @@ pub mod events {
     pub const JOB_FINISHED: &str = "job:finished";
     pub const AUTOMATION_FIRED: &str = "automation:fired";
     pub const ISSUE_NEW: &str = "issue:new";
+    /// Payload `CallRecord`: a call started ringing (result in_progress) or changed state.
+    pub const CALL_UPDATE: &str = "call:update";
 }
 
 #[cfg(test)]

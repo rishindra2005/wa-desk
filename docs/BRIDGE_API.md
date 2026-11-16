@@ -57,3 +57,8 @@ These are the differences from the text above. Clients should code against these
   - With no cache entry and no connection, the endpoint returns 503.
 - In `message_receipts`, `chat_jid` uses the same phone-JID form as `messages.chat_jid`, because LID DMs are resolved. Receipts for `status@broadcast` are not stored.
 - Bad or missing `jid` returns 400 as JSON `{success:false,message}`. Wrong methods return 405 as plain text.
+
+## Calls (wa-desk additions, v3)
+- `POST /api/call/reject` `{call_id, caller_jid}` → `{success, message}`: `RejectCall(callerJID, callID)`. 409 if the call is not in progress in `calls`. 503 when disconnected.
+- **1:1 call media type:** in `CallOffer`, inspect the offer node (`evt.Data`) for a `video` child (and/or attributes under `<offer>`). Store `call_type='video'` when present, otherwise `voice`. Keep group `CallOfferNotice.Media`.
+- Calls stay in the existing `calls` table. wa-desk polls it through its watcher, so no webhook is needed.

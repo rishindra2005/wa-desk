@@ -32,6 +32,8 @@ Calling conventions:
 | `forward_messages` | `{ req: ForwardReq }` | `SendResult[]` (one per message × target; never more than 5 targets) |
 | `copy_messages_text` | `{ chatJid, messageIds: string[] }` | `string`: WhatsApp-style "[time] Name: text" lines for the clipboard |
 | `refresh_chat_names` | none | `number`: how many chat names were fixed from bridge metadata (groups, communities, channels) |
+| `list_calls` | `{ query: CallQuery }` | `Page<CallRecord>` (newest first). Calls also appear inline in `get_messages`? No: the UI merges `list_calls({chat_jid})` into the thread by time |
+| `reject_call` | `{ callId, callerJid }` | `void`: declines a ringing call (bridge `RejectCall`); `invalid` if it is not ringing |
 | `send_message` | `{ req: SendReq }` | `SendResult` |
 | `react` | `{ req: ReactReq }` | `void` |
 | `mark_read` | `{ chatJid }` | `void` |
@@ -66,6 +68,7 @@ The UI picks local files (attachments, convert inputs) and save destinations wit
 | `job:progress` | `JobProgress` | Throttled to ≤ 5/s per job |
 | `job:finished` | `JobRecord` | A job reached a terminal status |
 | `automation:fired` | `AutomationEvent` | A rule matched (dry-run or real) |
+| `call:update` | `CallRecord` | An incoming call started ringing, or its state changed (answered elsewhere, missed, ended) |
 | `issue:new` | `Issue` | An issue was recorded for the first time, or reopened |
 
 ## Media URLs (custom protocol `wa-media`)
