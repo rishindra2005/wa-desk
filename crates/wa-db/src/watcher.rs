@@ -57,6 +57,8 @@ struct State {
     chats: HashMap<String, i64>,
     /// (call_id, chat_jid) → hash of the newest `calls` rows.
     calls: HashMap<(String, String), i64>,
+    /// `chat_state` key → hash of (archived, pinned, muted_until).
+    chat_state: HashMap<String, i64>,
 }
 
 /// Polls messages.db for changes. One instance per app.
@@ -120,6 +122,7 @@ impl Watcher {
             st.file_sig = sig;
             st.chats = chat_hashes(conn)?;
             st.calls = call_hashes(&calls::newest(conn, calls::WATCH_ROWS)?);
+            st.chat_state = state_hashes(conn)?;
             if st.last_rowid >= max {
                 return Ok(WatchOutcome {
                     max_rowid: st.last_rowid,
@@ -156,6 +159,7 @@ impl Watcher {
                 self.core.names.invalidate();
             }
             st.chats = chats;
+            changed_chats.extend(self.changed_states(st, conn)?);
             if self.core.index_ready()? {
                 changed_chats.extend(self.recent_changes(conn)?);
             }
@@ -170,6 +174,38 @@ impl Watcher {
         }
         out.changed_chats = changed_chats.into_iter().collect();
         out.max_rowid = st.last_rowid;
+        Ok(out)
+    }
+
+    /// Chats whose archive/pin/mute row was added, changed or removed.
+    fn changed_states(&self, st: &mut State, conn: &RoConn) -> Result<Vec<String>> {
+        let now = state_hashes(conn)?;
+        let mut keys: Vec<String> = now
+            .iter()
+            .filter(|(k, h)| st.chat_state.get(*k) != Some(*h))
+            .map(|(k, _)| k.clone())
+            .collect();
+        keys.extend(
+            st.chat_state
+                .keys()
+                .filter(|k| !now.contains_key(*k))
+                .cloned(),
+        );
+        st.chat_state = now;
+        if keys.is_empty() {
+            return Ok(keys);
+        }
+        // Report the chat under its normalised JID as well as the stored key.
+        let names = self.core.names.snapshot()?;
+        let mut out = Vec::new();
+        for k in keys {
+            if let Some(n) = names.normalize(&k)
+                && n != k
+            {
+                out.push(n);
+            }
+            out.push(k);
+        }
         Ok(out)
     }
 
@@ -294,6 +330,25 @@ fn chat_hashes(conn: &RoConn) -> Result<HashMap<String, i64>> {
             return Ok(out);
         }
     }
+}
+
+/// `chat_state` key → hash of its values (empty without the table).
+fn state_hashes(conn: &RoConn) -> Result<HashMap<String, i64>> {
+    Ok(crate::chat_state::raw_rows(conn)?
+        .into_iter()
+        .map(|(jid, a, p, m)| {
+            let vals = format!("{a}|{p}|{}", m.map(|v| v.to_string()).unwrap_or_default());
+            let h = row_hash(&HashFields {
+                content: &vals,
+                deleted_at: None,
+                sender: "",
+                media_type: "",
+                filename: None,
+                timestamp: "",
+            });
+            (jid, h)
+        })
+        .collect())
 }
 
 fn call_hashes(rows: &[calls::RawCall]) -> HashMap<(String, String), i64> {
