@@ -8,6 +8,7 @@
   import Skeleton from "../../components/Skeleton.svelte";
   import Spinner from "../../components/Spinner.svelte";
   import DocIcon from "../../components/DocIcon.svelte";
+  import Avatar from "../../components/Avatar.svelte";
   import DocPreview from "../../components/DocPreview.svelte";
   import { downloadMedia, openExternal, saveMedia } from "../../media";
   import { formatSize, shortDate, formatCount, displayName } from "../../utils/format";
@@ -141,7 +142,7 @@
             <button class="flex h-11 w-full items-center gap-3 border-b border-border px-5 text-left text-[13px] {isSel ? 'bg-accent-soft' : 'hover:bg-surface-2'}" role="row" aria-selected={isSel} onclick={() => (selected = d)} data-testid="doc-row">
               <span class="flex min-w-0 flex-[3] items-center gap-2" role="cell"><DocIcon filename={d.media.filename} mime={d.media.mime} size={24} /><span class="truncate">{d.media.filename}</span></span>
               <span class="flex-[2] truncate text-muted" role="cell">{d.chat_name}</span>
-              <span class="flex-[1.5] truncate text-muted" role="cell">{d.is_from_me ? "You" : displayName(d.sender_name)}</span>
+              <span class="flex min-w-0 flex-[1.5] items-center gap-1.5 text-muted" role="cell">{#if !d.is_from_me}<Avatar name={d.sender_name} id={d.sender_jid ?? d.chat_jid} size={18} />{/if}<span class="truncate">{d.is_from_me ? "You" : displayName(d.sender_name, d.sender_jid)}</span></span>
               <span class="w-28 text-muted" role="cell">{shortDate(d.ts)}</span>
               <span class="w-20 text-right tabular-nums text-muted" role="cell">{formatSize(d.media.size)}</span>
               <span class="w-24" role="cell">
@@ -180,7 +181,7 @@
           <EmptyState icon={FileText} title="Not downloaded yet" message="Download the file to preview it." />
         {:else}
           {#key d.chat_jid + d.message_id}
-            <DocPreview chatJid={d.chat_jid} messageId={d.message_id} filename={d.media.filename ?? ""} />
+            <DocPreview chatJid={d.chat_jid} messageId={d.message_id} filename={d.media.filename ?? ""} media={d.media} />
           {/key}
         {/if}
       </div>

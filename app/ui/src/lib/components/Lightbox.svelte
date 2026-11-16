@@ -7,12 +7,19 @@
     title?: string;
     subtitle?: string;
     poster?: string | null;
+    /** Low-res placeholder shown (blurred) until the full image has loaded. */
+    thumb?: string | null;
+    /** Source message, enables "Convert". */
+    chatJid?: string;
+    messageId?: string;
+    filename?: string | null;
   }
 </script>
 
 <script lang="ts">
   import { ChevronLeft, ChevronRight, X, ZoomIn, ZoomOut, Maximize, ExternalLink } from "@lucide/svelte";
   import { trapFocus } from "./overlay";
+  import ConvertMenu from "./ConvertMenu.svelte";
   import { clamp } from "../utils/misc";
 
   interface Props {
@@ -29,6 +36,23 @@
   let drag = $state<{ x: number; y: number; tx: number; ty: number } | null>(null);
 
   const item = $derived(items[index]);
+  let loadedKey = $state("");
+  const fullLoaded = $derived(!!item && loadedKey === item.key);
+
+  // Preload neighbours so next/prev feels instant.
+  const preloaded = new Set<string>();
+  $effect(() => {
+    void index;
+    for (const d of [1, -1, 2]) {
+      const n = items[(index + d + items.length) % items.length];
+      if (n && n.kind !== "video" && !preloaded.has(n.url)) {
+        preloaded.add(n.url);
+        const img = new Image();
+        img.decoding = "async";
+        img.src = n.url;
+      }
+    }
+  });
 
   function reset() {
     scale = 1;
@@ -96,6 +120,9 @@
       <button class="icon-btn text-white/80 hover:bg-white/10 hover:text-white" aria-label="Zoom in" onclick={() => zoom(1.25)}><ZoomIn size={18} /></button>
       <button class="icon-btn text-white/80 hover:bg-white/10 hover:text-white" aria-label="Reset zoom" onclick={reset}><Maximize size={18} /></button>
     {/if}
+    {#if item?.chatJid && item.messageId && (item.kind === "image" || item.kind === "video")}
+      <ConvertMenu chatJid={item.chatJid} messageId={item.messageId} kind={item.kind} filename={item.filename ?? null} dark />
+    {/if}
     {#if onopen && item}
       <button class="icon-btn text-white/80 hover:bg-white/10 hover:text-white" aria-label="Open externally" onclick={() => item && onopen?.(item)}><ExternalLink size={18} /></button>
     {/if}
@@ -112,10 +139,15 @@
           <!-- svelte-ignore a11y_media_has_caption -->
           <video src={item.url} poster={item.poster ?? undefined} controls autoplay class="max-h-full max-w-full"></video>
         {:else}
+          {#if item.thumb && !fullLoaded}
+            <img src={item.thumb} alt="" aria-hidden="true" class="pointer-events-none absolute max-h-full max-w-full scale-105 blur-md" data-testid="lightbox-placeholder" />
+          {/if}
           <img
             src={item.url}
             alt={item.title ?? "Image"}
-            class="max-h-full max-w-full select-none {drag ? '' : 'transition-transform duration-100'} {scale > 1 ? 'cursor-grab' : ''}"
+            onload={() => (loadedKey = item?.key ?? "")}
+            data-testid="lightbox-image"
+            class="relative max-h-full max-w-full select-none {drag ? '' : 'transition-transform duration-100'} {scale > 1 ? 'cursor-grab' : ''}"
             style="transform: translate({tx}px, {ty}px) scale({scale})"
             draggable="false"
             onpointerdown={down}

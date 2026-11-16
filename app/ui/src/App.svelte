@@ -3,6 +3,12 @@
   import TopBar from "./lib/shell/TopBar.svelte";
   import CommandPalette from "./lib/shell/CommandPalette.svelte";
   import Toasts from "./lib/components/Toasts.svelte";
+  import ContextMenu from "./lib/components/ContextMenu.svelte";
+  import ProfileDrawer from "./lib/components/ProfileDrawer.svelte";
+  import ExportDialog from "./lib/components/ExportDialog.svelte";
+  import ForwardDialog from "./lib/components/ForwardDialog.svelte";
+  import { warmPdfjs } from "./lib/components/pdfjs";
+  import { ctxMenu } from "./lib/state/menu.svelte";
   import ErrorPanel from "./lib/components/ErrorPanel.svelte";
   import { overlayCount } from "./lib/components/overlay";
   import ChatsView from "./lib/views/chats/ChatsView.svelte";
@@ -23,10 +29,21 @@
   });
 
   $effect(() => {
+    warmPdfjs();
+  });
+
+  $effect(() => {
     document.documentElement.classList.toggle("dark", app.dark);
   });
 
   function onKey(e: KeyboardEvent) {
+    if (e.key === "Escape" && app.profileJid && overlayCount() === 0 && !ctxMenu.isOpen) {
+      const t = e.target as HTMLElement | null;
+      if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) {
+        app.closeProfile();
+        return;
+      }
+    }
     const mod = e.ctrlKey || e.metaKey;
     if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
       e.preventDefault();
@@ -74,7 +91,11 @@
       {/key}
     </main>
   </div>
+  {#if app.profileJid}<ProfileDrawer />{/if}
 </div>
 
 {#if app.paletteOpen}<CommandPalette />{/if}
+{#if app.exportDialog}<ExportDialog {...app.exportDialog} />{/if}
+{#if app.forwardDialog}<ForwardDialog {...app.forwardDialog} />{/if}
+<ContextMenu />
 <Toasts />

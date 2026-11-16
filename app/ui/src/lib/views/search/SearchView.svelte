@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Search as SearchIcon, SlidersHorizontal, Info, X } from "@lucide/svelte";
+  import { Search as SearchIcon, SlidersHorizontal, Info, X, Star } from "@lucide/svelte";
   import * as api from "../../api";
   import type { MediaKind } from "../../bindings/MediaKind";
   import type { SearchResults } from "../../bindings/SearchResults";
@@ -15,6 +15,9 @@
   import { dateTime, formatCount, fromDateInput, displayName, mediaEmoji } from "../../utils/format";
   import { debounce } from "../../utils/misc";
 
+  let mode = $state<"messages" | "starred">("messages");
+  let starred = $state<SearchHit[]>([]);
+  let starredLoading = $state(false);
   let text = $state(app.searchText);
   let chatJids = $state<string[]>([]);
   let sender = $state("");
@@ -83,6 +86,35 @@
 
   const debounced = debounce(() => void run(), 250);
 
+  async function loadStarred() {
+    starredLoading = true;
+    try {
+      const all: SearchHit[] = [];
+      let cursor: string | null = null;
+      do {
+        const p = await api.listStarred(chatJids.length === 1 ? (chatJids[0] ?? null) : null, cursor, 200);
+        all.push(...p.items);
+        cursor = p.next_cursor;
+      } while (cursor && all.length < 2000);
+      starred = all;
+    } catch (e) {
+      error = e;
+    } finally {
+      starredLoading = false;
+    }
+  }
+
+  $effect(() => {
+    void chatJids;
+    if (mode === "starred") void loadStarred();
+  });
+
+  $effect(() => {
+    if (mode !== "starred") return;
+    const un = api.subscribe("db:changed", () => void loadStarred());
+    return un;
+  });
+
   $effect(() => {
     void text;
     void chatJids;
@@ -102,6 +134,11 @@
     if (n !== lastNonce) {
       lastNonce = n;
       if (app.searchText) text = app.searchText;
+      if (app.searchChat) {
+        chatJids = [app.searchChat];
+        mode = "messages";
+        app.searchChat = null;
+      }
       queueMicrotask(() => input?.focus());
     }
   });
@@ -126,6 +163,10 @@
 
 <div class="flex h-full min-h-0 flex-col">
   <div class="border-b border-border bg-surface px-5 py-3">
+    <div class="mb-3 tabbar" role="tablist" aria-label="Search mode">
+      <button role="tab" aria-selected={mode === "messages"} onclick={() => (mode = "messages")} data-testid="mode-messages">Messages</button>
+      <button role="tab" aria-selected={mode === "starred"} onclick={() => (mode = "starred")} data-testid="mode-starred"><Star size={12} class="mr-1 inline" /> Starred</button>
+    </div>
     <div class="flex items-center gap-2">
       <div class="relative flex-1">
         <SearchIcon size={16} class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
@@ -188,7 +229,32 @@
   {/if}
 
   <div class="min-h-0 flex-1">
-    {#if loading && !results}
+    {#if mode === "starred"}
+      {#if starredLoading && starred.length === 0}
+        <Skeleton rows={6} avatar />
+      {:else if starred.length === 0}
+        <EmptyState icon={Star} title="No starred messages" message="Right-click a message and choose Star to find it here." />
+      {:else}
+        <p class="px-5 py-2 text-xs text-muted" data-testid="starred-count">{starred.length} starred message{starred.length === 1 ? "" : "s"}</p>
+        <VirtualList items={starred} getKey={(h) => `${h.message.chat_jid}/${h.message.id}`} estimate={72} class="h-[calc(100%-2rem)]" ariaLabel="Starred messages">
+          {#snippet row(h: SearchHit)}
+            <button class="flex w-full gap-3 border-b border-border px-5 py-3 text-left hover:bg-surface-2" onclick={() => app.jumpTo(h.message.chat_jid, h.message.id)} data-testid="starred-hit">
+              <Avatar name={h.chat_name} id={h.message.chat_jid} size={34} />
+              <div class="min-w-0 flex-1">
+                <div class="flex items-baseline gap-2 text-xs">
+                  <span class="truncate font-semibold text-fg">{h.chat_name}</span>
+                  <span class="truncate text-muted">{h.message.is_from_me ? "You" : displayName(h.message.sender_name, h.message.sender_jid)}</span>
+                  <span class="ml-auto shrink-0 text-faint">{dateTime(h.message.ts)}</span>
+                </div>
+                <p class="mt-0.5 line-clamp-2 text-[13px]" dir="auto">
+                  {#if h.message.media && !h.message.content}<span class="mr-1">{mediaEmoji(h.message.media.kind)}</span>{h.message.media.filename ?? h.message.media.kind}{:else}{h.message.content}{/if}
+                </p>
+              </div>
+            </button>
+          {/snippet}
+        </VirtualList>
+      {/if}
+    {:else if loading && !results}
       <Skeleton rows={7} avatar />
     {:else if error}
       <ErrorPanel {error} reset={run} />

@@ -10,6 +10,7 @@ import type { ViewId } from "../errors";
 import { toasts } from "./toasts.svelte";
 import { debounce } from "../utils/misc";
 import { notify } from "../platform";
+import { resetAvatarCache } from "../avatar";
 
 export const VIEWS: { id: ViewId; label: string }[] = [
   { id: "chats", label: "Chats" },
@@ -48,6 +49,13 @@ class AppState {
   systemDark = $state(false);
   /** Media item handed to the Tools converter (from Docs / Media). */
   toolsInput = $state<{ chatJid: string; messageId: string; label: string } | null>(null);
+  /** Profile / info drawer target (contact, group, community or channel JID). */
+  profileJid = $state<string | null>(null);
+  profileBack = $state<string[]>([]);
+  /** Chat scoped Search view (from "Search in chat"). */
+  searchChat = $state<string | null>(null);
+  exportDialog = $state<{ chatJid: string; chatName: string; messageIds: string[] } | null>(null);
+  forwardDialog = $state<{ chatJid: string; messageIds: string[] } | null>(null);
   /** Theme preview before settings load (persisted locally to avoid a flash). */
   localTheme = $state<Theme>("system");
 
@@ -71,6 +79,51 @@ class AppState {
     this.openChatJid = chatJid;
     this.view = "chats";
     this.jump = { chatJid, messageId, nonce: Date.now() + Math.random() };
+  }
+
+  /** Open the info drawer for a JID; `push` keeps the previous one for Back. */
+  openProfile(jid: string, push = false): void {
+    if (push && this.profileJid && this.profileJid !== jid) this.profileBack = [...this.profileBack, this.profileJid];
+    else if (!push) this.profileBack = [];
+    this.profileJid = jid;
+  }
+
+  closeProfile(): void {
+    this.profileJid = null;
+    this.profileBack = [];
+  }
+
+  profileGoBack(): void {
+    const prev = this.profileBack[this.profileBack.length - 1];
+    if (!prev) return this.closeProfile();
+    this.profileBack = this.profileBack.slice(0, -1);
+    this.profileJid = prev;
+  }
+
+  searchInChat(jid: string): void {
+    this.searchChat = jid;
+    this.openSearch();
+  }
+
+  openExport(chatJid: string, chatName: string, messageIds: string[] = []): void {
+    this.exportDialog = { chatJid, chatName, messageIds };
+  }
+
+  openForward(chatJid: string, messageIds: string[]): void {
+    this.forwardDialog = { chatJid, messageIds };
+  }
+
+  /** Fix placeholder chat names from bridge metadata and report how many changed. */
+  async refreshNames(): Promise<number | null> {
+    try {
+      const n = await api.refreshChatNames();
+      resetAvatarCache();
+      toasts.success(n === 0 ? "Names are up to date" : `Fixed ${n} chat name${n === 1 ? "" : "s"}`);
+      return n;
+    } catch (e) {
+      toasts.error(e, "Couldn't refresh names");
+      return null;
+    }
   }
 
   openSearch(text?: string): void {

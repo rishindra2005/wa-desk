@@ -130,7 +130,7 @@
             data-testid="palette-item"
             data-group={c.group}
           >
-            {#if c.chat}<Avatar name={c.chat.name} id={c.chat.jid} size={22} group={c.chat.is_group} />{:else if c.id === "run:reconnect"}<RefreshCw size={15} />{:else}<Icon size={15} />{/if}
+            {#if c.chat}<Avatar name={c.chat.name} id={c.chat.jid} url={c.chat.avatar_url} type={c.chat.chat_type} size={22} />{:else if c.id === "run:reconnect"}<RefreshCw size={15} />{:else}<Icon size={15} />{/if}
             <span class="min-w-0 flex-1 truncate">{c.label}</span>
             {#if c.hint}<span class="kbd">{c.hint}</span>{/if}
           </button>

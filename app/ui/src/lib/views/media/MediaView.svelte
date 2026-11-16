@@ -8,12 +8,13 @@
   import EmptyState from "../../components/EmptyState.svelte";
   import ErrorPanel from "../../components/ErrorPanel.svelte";
   import Spinner from "../../components/Spinner.svelte";
+  import Avatar from "../../components/Avatar.svelte";
   import Lightbox, { type LightboxItem } from "../../components/Lightbox.svelte";
   import Modal from "../../components/Modal.svelte";
   import DocPreview from "../../components/DocPreview.svelte";
   import DocIcon from "../../components/DocIcon.svelte";
   import { downloadMedia, openExternal } from "../../media";
-  import { formatSize, shortDate, formatCount, mediaEmoji } from "../../utils/format";
+  import { formatSize, shortDate, formatCount, mediaEmoji, displayName } from "../../utils/format";
   import { debounce } from "../../utils/misc";
   import { app } from "../../state/app.svelte";
 
@@ -96,6 +97,10 @@
           title: x.caption || x.media.filename || "",
           subtitle: `${x.chat_name} · ${x.is_from_me ? "You" : x.sender_name} · ${shortDate(x.ts, Date.now(), true)}`,
           poster: x.media.thumb_url,
+          thumb: x.media.thumb_url,
+          chatJid: x.chat_jid,
+          messageId: x.message_id,
+          filename: x.media.filename,
         }));
       lightbox = { items: list, index: Math.max(0, list.findIndex((l) => l.key === `${it.chat_jid}/${it.message_id}`)) };
     } else preview = it;
@@ -178,6 +183,7 @@
                 {/if}
                 <div class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-2 pb-1.5 pt-5 text-[11px] text-white opacity-0 transition-opacity group-hover:opacity-100">
                   <p class="truncate font-medium">{it.chat_name}</p>
+                  <p class="flex items-center gap-1 truncate text-white/85"><Avatar name={it.sender_name} id={it.sender_jid ?? it.chat_jid} size={14} /> {it.is_from_me ? "You" : displayName(it.sender_name, it.sender_jid)}</p>
                   <p class="truncate text-white/75">{shortDate(it.ts)} · {formatSize(m.size)}</p>
                 </div>
               </div>
@@ -207,7 +213,7 @@
 {#if preview}
   {@const p = preview}
   <Modal title={p.media.filename ?? "Preview"} onclose={() => (preview = null)} width="min(960px, 92vw)">
-    <div class="-mx-4 -my-4 h-[70vh]"><DocPreview chatJid={p.chat_jid} messageId={p.message_id} filename={p.media.filename ?? ""} /></div>
+    <div class="-mx-4 -my-4 h-[70vh]"><DocPreview chatJid={p.chat_jid} messageId={p.message_id} filename={p.media.filename ?? ""} media={p.media} /></div>
     {#snippet footer()}
       <button class="btn" onclick={() => app.jumpTo(p.chat_jid, p.message_id)}>Show in chat</button>
       <button class="btn" onclick={() => openExternal(p.chat_jid, p.message_id)}>Open externally</button>
