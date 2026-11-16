@@ -30,8 +30,18 @@ import type { SearchResults } from "../bindings/SearchResults";
 import type { SendReq } from "../bindings/SendReq";
 import type { Settings } from "../bindings/Settings";
 import type { EventMap, EventName } from "../api";
-import { MOCK_PDF_URL, qrSvg } from "./assets";
-import { buildMedia, generateSeed, mediaEmoji, phoneJid, randomLogLine, type MockChat, type Seed } from "./seed";
+import type { ChatRef } from "../bindings/ChatRef";
+import type { ChatStats } from "../bindings/ChatStats";
+import type { ExportReq } from "../bindings/ExportReq";
+import type { ForwardReq } from "../bindings/ForwardReq";
+import type { LinkItem } from "../bindings/LinkItem";
+import type { Profile } from "../bindings/Profile";
+import type { SendResult } from "../bindings/SendResult";
+import { avatarSvg, MISSING_AVATAR, MOCK_PDF_URL, qrSvg } from "./assets";
+import { setAvatarResolver } from "../avatar";
+import { formatPhone } from "../utils/format";
+import { hashString } from "../utils/misc";
+import { aboutFor, businessFor, buildMedia, CONTACTS, generateSeed, mediaEmoji, phoneJid, randomLogLine, type MockChat, type Seed } from "./seed";
 import { evaluateRule, hasErrors, validateRule } from "../utils/rules";
 import { indexToByteOffset, extOf, baseName, docBucket } from "../utils/text";
 import { mulberry32 } from "../utils/misc";
@@ -111,6 +121,7 @@ export class MockBackend {
       link_extra_dirs: ["/home/user/Pictures/WhatsApp Images"],
     };
     this.conn = this.connState("connecting", "Connecting to the WhatsApp bridge…");
+    setAvatarResolver((jid) => this.avatarFor(jid));
     this.indexed = Math.floor(this.totalMessages() * 0.7);
   }
 
@@ -132,6 +143,7 @@ export class MockBackend {
   }
 
   stop(): void {
+    setAvatarResolver(null);
     for (const t of this.timers) clearTimeout(t);
     for (const t of this.intervals) clearInterval(t);
     for (const t of this.jobTimers.values()) clearInterval(t);
@@ -182,6 +194,30 @@ export class MockBackend {
         return this.context(chatJid, messageId, radius);
       }
       case "search": return this.search((a as { query: SearchQuery }).query);
+      case "get_profile": return this.getProfile((a as { jid: string }).jid);
+      case "chat_stats": return this.chatStats((a as { chatJid: string }).chatJid);
+      case "list_links": {
+        const { chatJid, cursor, limit } = a as { chatJid: string | null; cursor: string | null; limit: number };
+        return this.listLinks(chatJid, cursor, limit);
+      }
+      case "set_starred": {
+        const { chatJid, messageIds, starred } = a as { chatJid: string; messageIds: string[]; starred: boolean };
+        const c = this.chat(chatJid);
+        for (const m of c.messages) if (messageIds.includes(m.id)) m.starred = starred;
+        this.emit("db:changed", { chat_jids: [c.jid] });
+        return null;
+      }
+      case "list_starred": {
+        const { chatJid, cursor, limit } = a as { chatJid: string | null; cursor: string | null; limit: number };
+        return this.listStarred(chatJid, cursor, limit);
+      }
+      case "export_chat": return this.exportChat((a as { req: ExportReq }).req);
+      case "forward_messages": return this.forward((a as { req: ForwardReq }).req);
+      case "copy_messages_text": {
+        const { chatJid, messageIds } = a as { chatJid: string; messageIds: string[] };
+        return this.copyText(chatJid, messageIds);
+      }
+      case "refresh_chat_names": return this.refreshNames();
       case "open_path":
       case "reveal_path": {
         const { path } = a as { path: string };
@@ -294,6 +330,10 @@ export class MockBackend {
       jid: c.jid,
       name: c.name,
       is_group: c.is_group,
+      chat_type: c.chat_type,
+      parent: c.parent,
+      avatar_url: this.avatarFor(c.jid),
+      last_status: last?.is_from_me ? last.status : null,
       last_message_ts: last?.ts ?? null,
       last_preview: last ? previewOf(last) : null,
       last_sender_name: last ? (last.is_from_me ? "Me" : last.sender_name) : null,
@@ -305,7 +345,7 @@ export class MockBackend {
   listChats(q: ChatQuery): Page<ChatSummary> {
     const f = q.filter?.trim().toLowerCase() ?? "";
     let list = this.chats
-      .filter((c) => (q.kind === "all" ? true : q.kind === "group" ? c.is_group : !c.is_group))
+      .filter((c) => (q.kind === "all" ? true : q.kind === "group" ? c.chat_type === "group" : c.chat_type === q.kind))
       .filter((c) => (q.unread_only ? c.unread : true))
       .filter((c) => !f || c.name.toLowerCase().includes(f) || c.jid.includes(f))
       .map((c) => this.summary(c));
@@ -316,6 +356,13 @@ export class MockBackend {
   getMessages(q: MessagesQuery): Page<Message> {
     const c = this.chat(q.chat_jid);
     const limit = clampLimit(q.limit, 80);
+    if (q.after) {
+      const i = c.messages.findIndex((m) => m.id === q.after);
+      if (i < 0) fail("invalid", "Unknown cursor");
+      const items = c.messages.slice(i + 1, i + 1 + limit);
+      const more = i + 1 + limit < c.messages.length;
+      return { items, next_cursor: more && items.length ? (items[items.length - 1] as Message).id : null };
+    }
     let end = c.messages.length;
     if (q.before) {
       const i = c.messages.findIndex((m) => m.id === q.before);
@@ -394,6 +441,7 @@ export class MockBackend {
           message_id: m.id,
           chat_jid: c.jid,
           chat_name: c.name,
+          sender_jid: m.sender_jid,
           sender_name: m.sender_name,
           is_from_me: m.is_from_me,
           ts: m.ts,
@@ -448,6 +496,10 @@ export class MockBackend {
     const chat = this.chat(req.recipient);
     if (req.attachment && !req.attachment.startsWith("/")) fail("invalid", "Attachment path must be absolute");
     await new Promise((r) => setTimeout(r, 250 / this.opts.speed));
+    if (/\[fail\]/.test(req.text ?? "")) fail("external", "Couldn't reach WhatsApp to send this message");
+    if (chat.announce && chat.chat_type !== "direct" && !chat.participants.some((p) => p.is_me && p.is_admin)) {
+      fail("forbidden", "Only admins can send messages to this group");
+    }
     let quoted = null;
     if (req.reply_to) {
       const q = chat.messages.find((m) => m.id === req.reply_to);
@@ -473,8 +525,11 @@ export class MockBackend {
       quoted,
       reactions: [],
       deleted: false,
+      status: "sent",
+      starred: false,
     };
     this.push(chat, msg);
+    this.progressStatus(chat, msg);
     if (!this.opts.quiet && !chat.is_group) {
       this.later(2500, () => this.incoming(chat.jid, "👍 got it"));
     }
@@ -504,6 +559,8 @@ export class MockBackend {
       quoted: null,
       reactions: [],
       deleted: false,
+      status: null,
+      starred: false,
     };
     chat.unread = true;
     this.push(chat, msg);
@@ -546,6 +603,172 @@ export class MockBackend {
     if (req.emoji) m.reactions.push({ emoji: req.emoji, sender_name: "Me", is_from_me: true });
     this.emit("db:changed", { chat_jids: [req.chat_jid] });
     return null;
+  }
+
+  /** sent -> delivered -> read (-> played for voice notes), announced with db:changed. */
+  private progressStatus(chat: MockChat, msg: Message): void {
+    const steps: Message["status"][] = ["delivered", "read"];
+    steps.forEach((st, i) => {
+      this.later(1200 * (i + 1), () => {
+        msg.status = msg.media?.kind === "audio" && st === "read" ? "played" : st;
+        this.emit("db:changed", { chat_jids: [chat.jid] });
+      });
+    });
+  }
+
+  // ------------------------------------------------------------ profiles / extras
+
+  avatarFor(jid: string): string {
+    const c = this.chats.find((x) => x.jid === jid);
+    const has = c ? c.has_avatar : hashString(jid) % 4 !== 0;
+    if (!has) return MISSING_AVATAR;
+    const hue = hashString(jid) % 360;
+    const kind = c?.chat_type === "channel" ? "channel" : c && c.chat_type !== "direct" ? "group" : "person";
+    return avatarSvg(hue, kind);
+  }
+
+  private ref(c: MockChat): ChatRef {
+    return { jid: c.jid, name: c.name, chat_type: c.chat_type };
+  }
+
+  getProfile(jid: string): Profile {
+    const c = this.chats.find((x) => x.jid === jid);
+    if (c && (c.chat_type === "group" || c.chat_type === "community" || c.chat_type === "broadcast")) {
+      return {
+        type: "group", jid: c.jid, name: c.name, chat_type: c.chat_type, description: c.description,
+        created_at: c.created_at, created_by: c.created_by,
+        participants: c.participants.map((p) => ({ ...p, avatar_url: this.avatarFor(p.jid) })),
+        participant_count: c.participants.length, parent: c.parent,
+        sub_groups: c.sub_groups, announce_only: c.announce, locked: c.locked, avatar_url: this.avatarFor(c.jid),
+      };
+    }
+    if (c && c.chat_type === "channel") {
+      return { type: "channel", jid: c.jid, name: c.name, description: c.description, subscribers: c.subscribers, verified: c.verified, avatar_url: this.avatarFor(c.jid) };
+    }
+    const phone = jid.endsWith("@s.whatsapp.net") ? jid.split("@")[0] ?? "" : "";
+    const contact = CONTACTS.find((x) => x.phone === phone);
+    const fromGroup = this.chats.flatMap((x) => x.participants).find((p) => p.jid === jid);
+    const isMe = phone === "919845012345";
+    const common = this.chats
+      .filter((g) => (g.chat_type === "group" || g.chat_type === "community") && g.participants.some((p) => p.jid === jid))
+      .map((g) => this.ref(g));
+    const name = c?.name && !/^\d+$/.test(c.name) ? c.name : contact?.name ?? (fromGroup?.name || "");
+    return {
+      type: "contact", jid, name: name || (phone ? formatPhone(jid) : "Unknown contact"),
+      push_name: contact ? contact.name.split(" ")[0] ?? null : fromGroup?.name || null,
+      phone: phone ? formatPhone(jid) : null,
+      about: isMe ? "Hey there! I am using WhatsApp." : phone ? aboutFor(phone) : null,
+      avatar_url: this.avatarFor(jid), is_me: isMe,
+      business: contact ? businessFor(contact) : null,
+      common_groups: isMe ? [] : common.slice(0, 12),
+    };
+  }
+
+  chatStats(jid: string): ChatStats {
+    const c = this.chats.find((x) => x.jid === jid);
+    if (!c) return { messages: 0, media: 0, docs: 0, links: 0, starred: 0 };
+    const live = c.messages.filter((m) => !m.deleted);
+    return {
+      messages: live.length,
+      media: live.filter((m) => m.media && m.media.kind !== "document").length,
+      docs: live.filter((m) => m.media?.kind === "document").length,
+      links: this.linksOf(c).length,
+      starred: live.filter((m) => m.starred).length,
+    };
+  }
+
+  private linksOf(c: MockChat): LinkItem[] {
+    const out: LinkItem[] = [];
+    for (const m of c.messages) {
+      if (m.deleted) continue;
+      for (const url of m.content.match(/\b(?:https?:\/\/|www\.)[^\s<>"']+/g) ?? []) {
+        out.push({
+          url: url.replace(/[.,;:!?)]+$/, ""), message_id: m.id, chat_jid: c.jid,
+          sender_name: m.is_from_me ? "Me" : m.sender_name, ts: m.ts, context: m.content.slice(0, 200),
+        });
+      }
+    }
+    return out.sort((a, b) => b.ts - a.ts);
+  }
+
+  listLinks(chatJid: string | null, cursor: string | null, limit: number): Page<LinkItem> {
+    const all = (chatJid ? [this.chat(chatJid)] : this.chats).flatMap((c) => this.linksOf(c)).sort((a, b) => b.ts - a.ts);
+    return paginate(all, cursor, clampLimit(limit, 100));
+  }
+
+  listStarred(chatJid: string | null, cursor: string | null, limit: number): Page<SearchHit> {
+    const hits: SearchHit[] = [];
+    for (const c of chatJid ? [this.chat(chatJid)] : this.chats) {
+      for (const m of c.messages) if (m.starred && !m.deleted) hits.push({ message: m, chat_name: c.name, highlights: [] });
+    }
+    hits.sort((a, b) => b.message.ts - a.message.ts);
+    return paginate(hits, cursor, clampLimit(limit, 100));
+  }
+
+  exportChat(req: ExportReq): string {
+    const c = this.chat(req.chat_jid);
+    if (!["html", "txt", "json", "pdf"].includes(req.format)) fail("invalid", "Unknown export format");
+    const stamp = new Date(this.nowSec() * 1000).toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const stem = `${c.name.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "chat"}-${stamp}`;
+    return req.format === "html" && req.include_media ? `${EXPORTS}/${stem}` : `${EXPORTS}/${stem}.${req.format}`;
+  }
+
+  forward(req: ForwardReq): SendResult[] {
+    if (req.to.length === 0) fail("invalid", "Pick at least one chat");
+    if (req.to.length > 5) fail("invalid", "You can forward to at most 5 chats at once");
+    const src = this.chat(req.from_chat);
+    const out: SendResult[] = [];
+    for (const to of req.to) {
+      const target = this.chats.find((x) => x.jid === to);
+      for (const id of req.message_ids) {
+        const m = src.messages.find((x) => x.id === id);
+        if (!m || !target) {
+          out.push({ ok: false, message: !target ? "Chat not found" : "Message not found" });
+          continue;
+        }
+        if (target.chat_type === "channel" || (target.announce && !target.participants.some((p) => p.is_me && p.is_admin))) {
+          out.push({ ok: false, message: `Only admins can send to ${target.name}` });
+          continue;
+        }
+        const copy: Message = {
+          ...m, id: `3EB0FWD${(this.nextId++).toString(16).toUpperCase()}`, chat_jid: target.jid, sender_jid: null,
+          sender_name: "Me", is_from_me: true, ts: this.nowSec(), quoted: null, reactions: [], status: "sent", starred: false,
+        };
+        this.push(target, copy);
+        this.progressStatus(target, copy);
+        out.push({ ok: true, message: `Forwarded to ${target.name}` });
+      }
+    }
+    return out;
+  }
+
+  copyText(chatJid: string, ids: string[]): string {
+    const c = this.chat(chatJid);
+    const want = new Set(ids);
+    return c.messages
+      .filter((m) => want.has(m.id))
+      .map((m) => {
+        const d = new Date(m.ts * 1000);
+        const p = (n: number) => String(n).padStart(2, "0");
+        const stamp = `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}, ${p(d.getHours())}:${p(d.getMinutes())}`;
+        const body = m.deleted ? "This message was deleted" : m.content || (m.media ? `<${m.media.kind}: ${m.media.filename ?? ""}>` : "");
+        return `[${stamp}] ${m.is_from_me ? "Me" : m.sender_name}: ${body}`;
+      })
+      .join("\n");
+  }
+
+  refreshNames(): number {
+    const changed: string[] = [];
+    for (const c of this.chats) {
+      if (c.placeholder_for) {
+        c.name = c.placeholder_for;
+        c.placeholder_for = null;
+        changed.push(c.jid);
+        for (const p of this.chats) p.sub_groups = p.sub_groups.map((r) => (r.jid === c.jid ? { ...r, name: c.name } : r));
+      }
+    }
+    if (changed.length) this.emit("db:changed", { chat_jids: changed });
+    return changed.length;
   }
 
   // ------------------------------------------------------------ bridge
@@ -847,7 +1070,7 @@ export function matchTerms(text: string, terms: string[]): [number, number][] | 
 }
 
 function convertOutputs(spec: Extract<JobSpec, { type: "convert" }>): string[] {
-  const src = spec.input.type === "file" ? baseName(spec.input.path) : "media";
+  const src = spec.input.type === "file" ? baseName(spec.input.path) : spec.input.message_id.slice(-8);
   const stem = src.replace(/\.[^.]+$/, "");
   const dir = spec.output_dir ?? EXPORTS;
   const out = (name: string, url: string) => `${url}${url.includes("?") ? "&" : "?"}path=${encodeURIComponent(`${dir}/${name}`)}`;

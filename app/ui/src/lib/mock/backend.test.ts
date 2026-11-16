@@ -22,7 +22,7 @@ describe("seed", () => {
   it("is deterministic and realistic", () => {
     const other = new MockBackend({ now: NOW, quiet: true, latency: 0 });
     expect(other.totalMessages()).toBe(b.totalMessages());
-    expect(b.chats.length).toBe(40);
+    expect(b.chats.length).toBe(49);
     expect(b.totalMessages()).toBeGreaterThan(2500);
     expect(b.totalMessages()).toBeLessThan(3600);
     const all = b.chats.flatMap((c) => c.messages);
@@ -57,7 +57,7 @@ describe("commands", () => {
     const ts = all.items.map((c) => c.last_message_ts ?? 0);
     expect([...ts].sort((x, y) => y - x)).toEqual(ts);
     const groups = await api.listChats({ filter: null, kind: "group", unread_only: false, cursor: null, limit: 500 });
-    expect(groups.items.length).toBe(12);
+    expect(groups.items.length).toBe(17);
     expect(groups.items.every((c) => c.is_group)).toBe(true);
     const f = await api.listChats({ filter: "राहुल", kind: "all", unread_only: false, cursor: null, limit: 10 });
     expect(f.items.map((c) => c.name)).toContain("राहुल शर्मा");
@@ -67,10 +67,10 @@ describe("commands", () => {
 
   it("pages messages backwards in ascending order", async () => {
     const jid = b.chats[0]!.jid;
-    const p1 = await api.getMessages({ chat_jid: jid, before: null, limit: 80 });
+    const p1 = await api.getMessages({ chat_jid: jid, before: null, after: null, limit: 80 });
     expect(p1.items.length).toBe(80);
     expect(p1.items[0]!.ts).toBeLessThanOrEqual(p1.items[79]!.ts);
-    const p2 = await api.getMessages({ chat_jid: jid, before: p1.next_cursor, limit: 80 });
+    const p2 = await api.getMessages({ chat_jid: jid, before: p1.next_cursor, after: null, limit: 80 });
     expect(p2.items[79]!.ts).toBeLessThanOrEqual(p1.items[0]!.ts);
     expect(p2.items.some((m) => p1.items.some((x) => x.id === m.id))).toBe(false);
   });
@@ -109,7 +109,7 @@ describe("commands", () => {
     const res = await api.sendMessage({ recipient: jid, text: "hello", attachment: null, reply_to: null, mentions: [] });
     expect(res.ok).toBe(true);
     expect(cb).toHaveBeenCalledWith(expect.objectContaining({ chat_jids: [jid], count: 1 }));
-    const last = await api.getMessages({ chat_jid: jid, before: null, limit: 1 });
+    const last = await api.getMessages({ chat_jid: jid, before: null, after: null, limit: 1 });
     expect(last.items[0]).toMatchObject({ content: "hello", is_from_me: true });
     await un();
   });

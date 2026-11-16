@@ -89,7 +89,7 @@
     loading = messages.length === 0;
     error = null;
     try {
-      const page = await api.getMessages({ chat_jid: chat.jid, before: null, limit: PAGE });
+      const page = await api.getMessages({ chat_jid: chat.jid, before: null, after: null, limit: PAGE });
       if (my !== loadSeq) return;
       messages = page.items;
       olderCursor = page.next_cursor;
@@ -111,7 +111,7 @@
     loadingOlder = true;
     const jid = chat.jid;
     try {
-      const page = await api.getMessages({ chat_jid: jid, before: olderCursor, limit: PAGE });
+      const page = await api.getMessages({ chat_jid: jid, before: olderCursor, after: null, limit: PAGE });
       if (jid !== chat.jid) return;
       messages = merge(messages, page.items);
       olderCursor = page.next_cursor;
@@ -190,7 +190,7 @@
       return;
     }
     try {
-      const page = await api.getMessages({ chat_jid: chat.jid, before: null, limit: 50 });
+      const page = await api.getMessages({ chat_jid: chat.jid, before: null, after: null, limit: 50 });
       const known = new Set(messages.map((m) => m.id));
       const fresh = page.items.filter((m) => !known.has(m.id)).length;
       messages = merge(messages, page.items);
@@ -217,7 +217,7 @@
       let cursor: string | null = null;
       let acc: Message[] = [];
       for (let i = 0; i < 40; i++) {
-        const page: Awaited<ReturnType<typeof api.getMessages>> = await api.getMessages({ chat_jid: chat.jid, before: cursor, limit: 500 });
+        const page: Awaited<ReturnType<typeof api.getMessages>> = await api.getMessages({ chat_jid: chat.jid, before: cursor, after: null, limit: 500 });
         acc = acc.concat(page.items);
         cursor = page.next_cursor;
         if (!cursor || (oldest && page.items.some((m) => m.id === oldest))) break;

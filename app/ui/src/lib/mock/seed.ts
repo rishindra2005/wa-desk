@@ -8,6 +8,11 @@ import type { LogLine } from "../bindings/LogLine";
 import type { MediaKind } from "../bindings/MediaKind";
 import type { MediaRef } from "../bindings/MediaRef";
 import type { Message } from "../bindings/Message";
+import type { ChatRef } from "../bindings/ChatRef";
+import type { ChatType } from "../bindings/ChatType";
+import type { BusinessInfo } from "../bindings/BusinessInfo";
+import type { Participant } from "../bindings/Participant";
+import type { MessageStatus } from "../bindings/MessageStatus";
 import type { Rule } from "../bindings/Rule";
 import { hashString, mulberry32 } from "../utils/misc";
 import { mediaEmoji } from "../utils/format";
@@ -23,7 +28,24 @@ export interface Contact {
 export interface MockChat {
   jid: string;
   name: string;
+  /** Group or community (multi-sender conversation). */
   is_group: boolean;
+  chat_type: ChatType;
+  parent: ChatRef | null;
+  /** false = the picture request 404s and the UI shows initials / default icon. */
+  has_avatar: boolean;
+  description: string | null;
+  created_at: number | null;
+  created_by: string | null;
+  announce: boolean;
+  locked: boolean;
+  /** Group / community members (own entry has `is_me`). */
+  participants: Participant[];
+  sub_groups: ChatRef[];
+  subscribers: number | null;
+  verified: boolean;
+  /** Real name a placeholder-named chat gets after "refresh names". */
+  placeholder_for: string | null;
   unread: boolean;
   /** Ascending by ts. */
   messages: Message[];
@@ -153,6 +175,15 @@ const MIME: Record<string, string> = {
   zip: "application/zip",
 };
 
+function groupJid(idx: number, type: ChatType): string {
+  const user = `1203630${String(40000000000 + idx * 7919)}`;
+  return type === "channel" ? `${user}@newsletter` : type === "broadcast" ? `${1700000000 + idx}@broadcast` : `${user}@g.us`;
+}
+
+function now0(nowSec: number, idx: number): number {
+  return nowSec - 86_400 * (30 + idx * 9);
+}
+
 export function phoneJid(phone: string): string {
   return `${phone}@s.whatsapp.net`;
 }
@@ -270,18 +301,40 @@ export function generateSeed(nowSec: number = Math.floor(Date.now() / 1000), see
   const chats: MockChat[] = [];
   const direct = CONTACTS.slice(0, 28);
   // Interleave groups among directs so the list mixes both.
-  const order: ({ kind: "d"; c: Contact } | { kind: "g"; name: string })[] = [];
+  type GroupEntry = {
+    kind: "g";
+    name: string;
+    type?: ChatType;
+    size?: number;
+    parentIdx?: number;
+    placeholder?: string;
+    announce?: boolean;
+  };
+  const order: ({ kind: "d"; c: Contact } | GroupEntry)[] = [];
   let gi = 0;
   direct.forEach((c, i) => {
     order.push({ kind: "d", c });
     if (i % 2 === 1 && gi < GROUPS.length) order.push({ kind: "g", name: GROUPS[gi++] as string });
   });
   while (gi < GROUPS.length) order.push({ kind: "g", name: GROUPS[gi++] as string });
+  // Extra chat types (appended so the original seed sequence is unchanged).
+  const communityIdx = order.length;
+  order.push({ kind: "g", name: "Bengaluru Neighbours", type: "community", size: 180, announce: true });
+  for (const n of ["Parking & Gate", "Events & Festivals", "Lost & Found"]) {
+    order.push({ kind: "g", name: n, parentIdx: communityIdx, size: n.startsWith("Parking") ? 64 : 41 });
+  }
+  order.push({ kind: "g", name: "WhatsApp Tech News", type: "channel" });
+  order.push({ kind: "g", name: "Cricket Updates 🏏", type: "channel" });
+  order.push({ kind: "g", name: "Diwali wishes 🪔", type: "broadcast", size: 8 });
+  order.push({ kind: "g", name: "Neighbourhood Watch 🔒", placeholder: "120363041234567890", size: 17 });
+  order.push({ kind: "g", name: "Diwali Potluck 🪔", placeholder: "120363029876543210", size: 11 });
 
   order.forEach((entry, idx) => {
     const isGroup = entry.kind === "g";
-    const jid = isGroup ? `1203630${String(40000000000 + idx * 7919)}@g.us` : phoneJid(entry.c.phone);
-    const name = isGroup ? entry.name : entry.c.name;
+    const gtype: ChatType = entry.kind === "g" ? entry.type ?? "group" : "direct";
+    const jid = isGroup ? groupJid(idx, gtype) : phoneJid(entry.c.phone);
+    const name = entry.kind === "g" ? (entry.placeholder ?? entry.name) : entry.c.name;
+    const g2 = gen(seed * 1000 + idx);
     const count = idx === 0 ? 600 : idx === 2 ? 400 : g.int(18, 86);
     const members = isGroup
       ? [...Array.from({ length: g.int(4, 9) }, () => g.pick(CONTACTS)), ...(idx % 3 === 0 ? LID_SENDERS : [LID_SENDERS[0] as string])]
@@ -290,17 +343,21 @@ export function generateSeed(nowSec: number = Math.floor(Date.now() / 1000), see
     let ts = nowSec - Math.floor(idx * idx * 900 + g.int(30, 1800));
     const msgs: Message[] = [];
     for (let n = count - 1; n >= 0; n--) {
-      const fromMe = g.rnd() < (isGroup ? 0.2 : 0.42);
+      const fromMeDraw = g.rnd() < (isGroup ? 0.2 : 0.42);
+      const fromMe = gtype === "broadcast" ? true : gtype === "channel" ? false : fromMeDraw;
       let senderJid: string | null;
       let senderName: string;
-      if (fromMe) {
+      if (gtype === "channel") {
+        senderJid = jid;
+        senderName = name;
+      } else if (fromMe) {
         senderJid = null;
         senderName = "Me";
       } else if (isGroup) {
         const m = g.pick(members);
         if (typeof m === "string") {
           senderJid = m;
-          senderName = m.split("@")[0] ?? m;
+          senderName = m.startsWith("1182") ? "Rahul K" : m.startsWith("9988") ? "Meena" : (m.split("@")[0] ?? m);
         } else {
           senderJid = phoneJid(m.phone);
           senderName = m.name;
@@ -325,6 +382,8 @@ export function generateSeed(nowSec: number = Math.floor(Date.now() / 1000), see
         quoted: null,
         reactions: [],
         deleted: false,
+        status: null,
+        starred: false,
       });
       // Gap to the previous (older) message: bursts of short gaps, occasional long ones.
       const r = g.rnd();
@@ -362,14 +421,22 @@ export function generateSeed(nowSec: number = Math.floor(Date.now() / 1000), see
       }
     });
     const last = msgs[msgs.length - 1];
+    decorate(msgs, g2);
+    const parent: ChatRef | null =
+      entry.kind === "g" && entry.parentIdx !== undefined
+        ? { jid: groupJid(entry.parentIdx, "community"), name: (order[entry.parentIdx] as GroupEntry).name, chat_type: "community" }
+        : null;
+    const base = baseChat(jid, entry, gtype, parent, g2, now0(nowSec, idx));
     chats.push({
+      ...base,
       jid,
       name,
-      is_group: isGroup,
+      is_group: gtype === "group" || gtype === "community",
       unread: (idx % 5 === 1 || idx === 3) && !!last,
       messages: msgs,
     });
   });
+  finishChats(chats, nowSec);
 
   return {
     now: nowSec,
@@ -554,4 +621,131 @@ function seedJobs(now: number): JobRecord[] {
       error: null, outputs: [], created_at: now - 86_400 * 2, finished_at: now - 86_400 * 2 + 640,
     },
   ];
+}
+
+// ---------------------------------------------------------------- chat metadata
+
+const SIZES = new Map<string, number>();
+const FIRST = ["Aarav", "Diya", "Ishita", "Kabir", "Lakshmi", "Mohan", "Nikhil", "Om", "Pallavi", "Quincy", "Ritu", "Suresh", "Tara", "Uday", "Varun", "Wasim", "Yamini", "Zara", "Chetan", "Deepa"];
+const LAST = ["Nair", "Menon", "Bhat", "Kulkarni", "Banerjee", "Chopra", "Das", "Fernandes", "Gowda", "Hegde", "Jain", "Khan"];
+const DESCRIPTIONS: Record<string, string> = {
+  group: "Be kind, no spam. Share photos in the album, not in chat.",
+  community: "Official announcements for residents. Sub-groups cover parking, events and lost & found.",
+};
+const ABOUTS = ["Hey there! I am using WhatsApp.", "Busy", "At work", "Living my best life 🌈", "Available", "In a meeting", "Battery about to die", "कर्म करो, फल की चिंता मत करो"];
+const GROUP_SIZES = [6, 38, 120, 7, 45, 12, 3, 14, 24, 16, 250, 9];
+
+/** Status of own messages: mostly read, voice notes played, recent ones vary. */
+function decorate(msgs: Message[], g: Gen): void {
+  const lastOwn = msgs.map((m, i) => (m.is_from_me ? i : -1)).filter((i) => i >= 0).slice(-3);
+  msgs.forEach((m, i) => {
+    if (m.deleted) return;
+    if (m.is_from_me) {
+      const r = g.rnd();
+      let st: MessageStatus = r < 0.7 ? "read" : r < 0.88 ? "delivered" : "sent";
+      if (lastOwn.includes(i)) st = (["sent", "delivered", "read"] as const)[g.int(0, 2)] as MessageStatus;
+      if (m.media?.kind === "audio") st = r < 0.8 ? "played" : "delivered";
+      m.status = st;
+    }
+    if (g.rnd() < 0.04) m.starred = true;
+  });
+}
+
+function baseChat(
+  jid: string,
+  entry: { kind: string; type?: ChatType; size?: number; announce?: boolean; placeholder?: string; name?: string; c?: Contact },
+  type: ChatType,
+  parent: ChatRef | null,
+  g: Gen,
+  created: number,
+): Omit<MockChat, "jid" | "name" | "is_group" | "unread" | "messages"> {
+  const dad = entry.c?.name === "Dad";
+  const hasAvatar = type === "channel" || type === "community" ? true : dad ? false : hashString(jid) % 4 !== 0;
+  if (entry.size) SIZES.set(jid, entry.size);
+  return {
+    chat_type: type,
+    parent,
+    has_avatar: hasAvatar,
+    description: DESCRIPTIONS[type] ?? (type === "channel" ? "Daily updates, straight to your phone. Follow for news and highlights." : null),
+    created_at: type === "direct" ? null : created,
+    created_by: type === "channel" || type === "broadcast" || type === "direct" ? null : phoneJid(CONTACTS[g.int(0, 8)]?.phone ?? "919845012345"),
+    announce: !!entry.announce,
+    locked: type === "community" || g.rnd() < 0.2,
+    participants: [],
+    sub_groups: [],
+    subscribers: type === "channel" ? (entry.name?.startsWith("WhatsApp") ? 1_240_000 : 58_300) : null,
+    verified: type === "channel" && !!entry.name?.startsWith("WhatsApp"),
+    placeholder_for: entry.placeholder ? (entry.name ?? null) : null,
+  };
+}
+
+function phoneOf(i: number): string {
+  return `9198${String(10000000 + ((i * 7919) % 89999999)).padStart(8, "0")}`;
+}
+
+function formatPhoneLite(d: string): string {
+  return d.startsWith("91") && d.length === 12 ? `+91 ${d.slice(2, 7)} ${d.slice(7)}` : `+${d}`;
+}
+
+/** Fill participants (real senders + synthetic members) and community sub-groups. */
+function finishChats(chats: MockChat[], now: number): void {
+  const byJid = new Map(CONTACTS.map((c) => [phoneJid(c.phone), c]));
+  chats.forEach((c, ci) => {
+    if (c.chat_type !== "group" && c.chat_type !== "community" && c.chat_type !== "broadcast") return;
+    const target = SIZES.get(c.jid) ?? Math.min(250, GROUP_SIZES[ci % GROUP_SIZES.length] ?? 8);
+    const seen = new Set<string>();
+    const out: Participant[] = [];
+    const add = (jid: string, name: string, phone: string | null) => {
+      if (seen.has(jid)) return;
+      seen.add(jid);
+      out.push({ jid, name, phone: phone ? formatPhoneLite(phone) : null, is_admin: false, is_super_admin: false, is_me: false, avatar_url: "" });
+    };
+    for (const m of c.messages) {
+      if (m.is_from_me || !m.sender_jid || m.sender_jid.endsWith("@lid")) continue;
+      add(m.sender_jid, byJid.get(m.sender_jid)?.name ?? m.sender_name, m.sender_jid.split("@")[0] ?? null);
+    }
+    for (const m of c.messages) {
+      if (!m.is_from_me && m.sender_jid?.endsWith("@lid") && !seen.has(m.sender_jid)) {
+        seen.add(m.sender_jid);
+        out.push({ jid: m.sender_jid, name: /^\d+$/.test(m.sender_name) ? "" : m.sender_name, phone: null, is_admin: false, is_super_admin: false, is_me: false, avatar_url: "" });
+      }
+    }
+    let i = 0;
+    while (out.length < target - 1 && i < 2000) {
+      const n = `${FIRST[i % FIRST.length]} ${LAST[(i * 7 + c.jid.length) % LAST.length]}`;
+      const ph = phoneOf(i + (hashString(c.jid) % 1000));
+      add(phoneJid(ph), i % 11 === 0 ? "" : n, ph);
+      i++;
+    }
+    out.length = Math.min(out.length, Math.max(1, target - 1));
+    out.sort((a, b) => a.name.localeCompare(b.name));
+    out.unshift({ jid: phoneJid("919845012345"), name: "You", phone: formatPhoneLite("919845012345"), is_admin: true, is_super_admin: true, is_me: true, avatar_url: "" });
+    const admins = Math.max(1, Math.floor(target / 40) + 1);
+    for (let k = 1; k <= admins; k++) {
+      const p = out[k];
+      if (p) {
+        p.is_admin = true;
+        p.is_super_admin = k === 1;
+      }
+    }
+    c.participants = out;
+    if (c.created_at === null) c.created_at = now - 86_400 * 200;
+  });
+  for (const c of chats) {
+    if (c.parent) {
+      const parent = chats.find((x) => x.jid === c.parent?.jid);
+      parent?.sub_groups.push({ jid: c.jid, name: c.name, chat_type: c.chat_type });
+    }
+  }
+}
+
+export function aboutFor(phone: string): string {
+  return ABOUTS[hashString(phone) % ABOUTS.length] ?? "Hey there! I am using WhatsApp.";
+}
+
+export function businessFor(c: Contact): BusinessInfo | null {
+  if (c.name.startsWith("Dr. Iyengar"))
+    return { description: "Family medicine and paediatrics. Walk-ins welcome 9-5.", category: "Health & Medical", email: "hello@iyengarclinic.example", website: "https://iyengarclinic.example", address: "12, 4th Block, Jayanagar, Bengaluru" };
+  if (c.name.startsWith("Landlord")) return { description: null, category: "Real estate", email: null, website: null, address: null };
+  return null;
 }

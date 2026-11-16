@@ -73,3 +73,19 @@ export function qrSvg(seed: number): string {
 export function textDataUrl(text: string): string {
   return `data:text/plain;charset=utf-8,${encodeURIComponent(text)}`;
 }
+
+/** Generated profile picture (abstract, no initials so the fallback stays distinguishable). */
+export function avatarSvg(hue: number, kind: "person" | "group" | "channel"): string {
+  const h2 = (hue + 50) % 360;
+  const shapes =
+    kind === "person"
+      ? `<circle cx="128" cy="100" r="44" fill="rgba(255,255,255,.88)"/><path d="M40 256 C40 180 216 180 216 256 Z" fill="rgba(255,255,255,.88)"/>`
+      : kind === "group"
+        ? `<circle cx="92" cy="104" r="34" fill="rgba(255,255,255,.9)"/><circle cx="170" cy="112" r="30" fill="rgba(255,255,255,.75)"/><path d="M30 240 C30 176 154 176 154 240 Z" fill="rgba(255,255,255,.9)"/><path d="M130 240 C130 190 226 190 226 240 Z" fill="rgba(255,255,255,.75)"/>`
+        : `<path d="M70 110 L170 70 V186 L70 146 Z" fill="rgba(255,255,255,.9)"/><rect x="48" y="104" width="30" height="48" rx="8" fill="rgba(255,255,255,.9)"/><path d="M186 100 C206 116 206 140 186 156" stroke="rgba(255,255,255,.9)" stroke-width="12" fill="none" stroke-linecap="round"/>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${hue},55%,52%)"/><stop offset="1" stop-color="hsl(${h2},55%,38%)"/></linearGradient></defs><rect width="256" height="256" fill="url(#g)"/>${shapes}</svg>`;
+  return svgUrl(svg);
+}
+
+/** What the mock serves for "no profile picture": an undecodable image (the real app gets a 404). */
+export const MISSING_AVATAR = "data:image/png;base64,AAAA";
