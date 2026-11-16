@@ -35,6 +35,7 @@
   --avatar-l: 46%;
   --avatar-s: 55%;
   --name-l: 36%;
+  --tick-read: #2f9fe0;
   color-scheme: light;
 }
 
@@ -69,6 +70,7 @@
   --avatar-l: 40%;
   --avatar-s: 45%;
   --name-l: 70%;
+  --tick-read: #53bdeb;
   color-scheme: dark;
 }
 
@@ -411,4 +413,50 @@ body {
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* pdf.js text layer (selectable, copyable PDF text over the canvas). */
+.textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  z-index: 1;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+.textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.textLayer .markedContent {
+  display: contents;
+}
+.textLayer ::selection {
+  background: rgb(37 99 235 / 0.35);
+}
+/* Spinners that only appear when loading takes longer than 150 ms. */
+@keyframes late-fade {
+  to { opacity: 1; }
+}
+.late-in {
+  opacity: 0;
+  animation: late-fade 0.1s linear 0.15s forwards;
 }

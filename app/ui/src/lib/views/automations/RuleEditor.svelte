@@ -95,7 +95,7 @@
     sampleId = "";
     evalResult = null;
     if (!jid) return;
-    api.getMessages({ chat_jid: jid, before: null, limit: 30 }).then(
+    api.getMessages({ chat_jid: jid, before: null, after: null, limit: 30 }).then(
       (p) => {
         samples = p.items.filter((m) => !m.deleted).reverse();
         sampleId = samples[0]?.id ?? "";

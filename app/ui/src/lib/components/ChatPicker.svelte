@@ -133,7 +133,7 @@
             onmousedown={(e) => e.preventDefault()}
             onclick={() => toggle(c.jid)}
           >
-            <Avatar name={c.name} id={c.jid} size={22} group={c.is_group} />
+            <Avatar name={c.name} id={c.jid} url={c.avatar_url} type={c.chat_type} size={22} />
             <span class="min-w-0 flex-1 truncate">{c.name}</span>
             {#if c.is_group}<span class="badge">group</span>{/if}
             {#if sel}<Check size={14} class="text-accent" />{/if}

@@ -36,3 +36,24 @@ All endpoints use the existing auth rules (loopback Host header plus Bearer toke
 | `GET /api/avatar?jid=&full=0\|1` | none | `{path, picture_id}` for a file cached at `store/avatars/<jid with ':'→'_'>[-full].jpg`, refreshed when the picture ID changes or the file is more than 24 h old; 404 `{success:false,message:"no picture"}` when the chat has none (that answer is cached for 6 h). Downloads with `GetProfilePictureInfo` and then a plain HTTP GET of `info.URL`. |
 
 Every endpoint returns 503 while disconnected, except `/api/avatar`, which still serves cached files.
+
+## Implementation notes (bridge branch `local/wa-desk`, as deployed)
+These are the differences from the text above. Clients should code against these.
+- **Nullable fields.** Unknown values are JSON `null`, not `""`:
+  - profile: `push_name`, `verified_name`, `about`, `about_set_at`, `picture_id`, `business`
+  - group: `created_at`, `creator`, `linked_parent_jid`, and per participant `phone_jid`, `lid`, `display_name`
+  - newsletter: `picture_id`
+  - avatar: `picture_id`
+- `about_set_at` is **always `null`**, because whatsmeow's `GetUserInfo` doesn't return the time the status was set.
+- `business.description` and `business.website` come only from the business profile options, which whatsmeow parses only partly. They are usually `""`. `business.category` is the category names joined with `", "`. Any `GetBusinessProfile` error gives `business: null`.
+- `/api/profile` takes phone JIDs and `@lid` JIDs. A LID is mapped to its phone JID through the LID store before the query, and `jid` in the response echoes the input. A non-user JID returns 404.
+- In `/api/group`, `creator` is the owner's phone JID when it is known, otherwise the owner's JID. When `is_parent` is false, the `sub_groups` key is **left out**. When it is true, `sub_groups` is always present, possibly as `[]`. A group you aren't in (or that doesn't exist) returns 404, and a non-`@g.us` JID returns 400. `/api/group` also replaces a placeholder `chats.name`, using an UPDATE only.
+- `/api/newsletter` returns 400 for a non-`@newsletter` JID.
+- `POST /api/chats/refresh` returns an extra field, `cached` (bool), which is true when the answer is the result cached within the 60 s window. `groups` doesn't count communities. A failed refresh is not cached. The refresh never INSERTs into `chats`; it only UPDATEs rows whose name is a placeholder. It doesn't produce `chat_type = 'broadcast'`.
+- `/api/avatar` returns `{path, picture_id, cached}`, where `path` is absolute and `cached` is false only when the file was just downloaded.
+  - Next to each image the cache keeps a `<file>.id` sidecar and, for "no picture" answers, a `<file>.none` marker.
+  - Community pictures are fetched with `IsCommunity` (taken from `chat_meta`). Channel pictures come from `GetNewsletterInfo`.
+  - An invalid JID returns 400. An upstream failure returns 502, unless a stale cached file exists, in which case that file is served.
+  - With no cache entry and no connection, the endpoint returns 503.
+- In `message_receipts`, `chat_jid` uses the same phone-JID form as `messages.chat_jid`, because LID DMs are resolved. Receipts for `status@broadcast` are not stored.
+- Bad or missing `jid` returns 400 as JSON `{success:false,message}`. Wrong methods return 405 as plain text.

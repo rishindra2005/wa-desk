@@ -6,11 +6,12 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { ZoomIn, ZoomOut, ChevronUp, ChevronDown, MoveHorizontal } from "@lucide/svelte";
-  import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs-dist/legacy/build/pdf.mjs";
+  import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask, TextLayer } from "pdfjs-dist/legacy/build/pdf.mjs";
+  import { getPdfjs } from "./pdfjs";
   import Spinner from "./Spinner.svelte";
   import { clamp } from "../utils/misc";
 
-  let { url, title = "Document" }: { url: string; title?: string } = $props();
+  let { url, title = "Document", placeholder = null }: { url: string; title?: string; placeholder?: string | null } = $props();
 
   const CSS_UNITS = 96 / 72;
   let doc: PDFDocumentProxy | null = null;
@@ -32,12 +33,8 @@
     pageSizes = [];
     near = new Set();
     try {
-      const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-      if (!pdfjs.GlobalWorkerOptions.workerSrc) {
-        const worker = await import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url");
-        pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
-      }
-      const task = pdfjs.getDocument({ url: src });
+      const { pdfjs, worker } = await getPdfjs();
+      const task = pdfjs.getDocument({ url: src, worker });
       const d = await task.promise;
       if (seq !== loadSeq) {
         void task.destroy();
@@ -50,6 +47,7 @@
       const vp = first.getViewport({ scale: 1 });
       pageSizes = Array.from({ length: d.numPages }, () => ({ w: vp.width, h: vp.height }));
       fitWidth();
+      near = new Set([1]); // render page 1 immediately, without waiting for the observer
       loading = false;
     } catch (e) {
       if (seq !== loadSeq) return;
@@ -131,6 +129,40 @@
     };
   }
 
+  // Selectable text on top of the canvas.
+  function textLayer(node: HTMLDivElement, params: { n: number; scale: number }) {
+    let layer: TextLayer | null = null;
+    let alive = true;
+    const run = async ({ n, scale: s }: { n: number; scale: number }) => {
+      layer?.cancel();
+      if (!doc) return;
+      try {
+        const { pdfjs } = await getPdfjs();
+        const page = await doc.getPage(n);
+        if (!alive) return;
+        node.replaceChildren();
+        node.style.setProperty("--total-scale-factor", String(s * CSS_UNITS));
+        layer = new pdfjs.TextLayer({
+          textContentSource: page.streamTextContent(),
+          container: node,
+          viewport: page.getViewport({ scale: s * CSS_UNITS }),
+        });
+        await layer.render();
+        node.dataset.ready = "true";
+      } catch {
+        /* cancelled */
+      }
+    };
+    void run(params);
+    return {
+      update: (p: { n: number; scale: number }) => void run(p),
+      destroy: () => {
+        alive = false;
+        layer?.cancel();
+      },
+    };
+  }
+
   function onScroll() {
     if (!container) return;
     const mid = container.scrollTop + 40;
@@ -181,7 +213,10 @@
   </div>
   <div bind:this={container} class="relative min-h-0 flex-1 overflow-auto bg-surface-3/60" onscroll={onScroll} role="document" aria-label={title}>
     {#if loading}
-      <div class="flex h-full items-center justify-center gap-2 text-sm text-muted"><Spinner /> Loading PDF…</div>
+      <div class="relative flex h-full items-center justify-center gap-2 text-sm text-muted">
+        {#if placeholder}<img src={placeholder} alt="" aria-hidden="true" class="max-h-full max-w-full object-contain" data-testid="pdf-placeholder" />{/if}
+        <span class="late-in {placeholder ? 'absolute' : ''} flex items-center gap-2 rounded-md bg-surface/80 px-2 py-1"><Spinner /> Loading PDF…</span>
+      </div>
     {:else if error}
       <div class="flex h-full items-center justify-center p-6 text-center text-sm text-danger" role="alert">Couldn't open this PDF: {error}</div>
     {:else}
@@ -193,8 +228,12 @@
             data-page={i + 1}
             use:observe={i + 1}
           >
+            {#if i === 0 && placeholder}
+              <img src={placeholder} alt="" aria-hidden="true" class="absolute inset-0 h-full w-full object-fill" data-testid="pdf-placeholder" />
+            {/if}
             {#if near.has(i + 1)}
-              <canvas class="block h-full w-full" aria-label="Page {i + 1}" use:renderPage={{ n: i + 1, scale }}></canvas>
+              <canvas class="relative block h-full w-full" aria-label="Page {i + 1}" use:renderPage={{ n: i + 1, scale }}></canvas>
+              <div class="textLayer" data-testid="pdf-text-layer" use:textLayer={{ n: i + 1, scale }}></div>
             {:else}
               <div class="flex h-full items-center justify-center text-xs text-slate-400">Page {i + 1}</div>
             {/if}

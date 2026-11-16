@@ -1,38 +1,40 @@
 <script lang="ts">
   import { Paperclip, SendHorizontal, X, Reply, FileText } from "@lucide/svelte";
-  import * as api from "../../api";
   import type { Message } from "../../bindings/Message";
   import type { ChatSummary } from "../../bindings/ChatSummary";
   import Modal from "../../components/Modal.svelte";
-  import Spinner from "../../components/Spinner.svelte";
+  import type { SendReq } from "../../bindings/SendReq";
+  import { loadDraft, saveDraft, clearDraft } from "../../utils/drafts";
   import { pickFile } from "../../platform";
   import { toasts } from "../../state/toasts.svelte";
   import { baseName } from "../../utils/text";
+  import { chatLabel } from "../../utils/format";
 
   interface Props {
     chat: ChatSummary;
     replyTo: Message | null;
     confirmSends: boolean;
     oncancelreply: () => void;
-    onsent?: () => void;
+    /** Hand the request to the thread, which shows it optimistically (clock, then ticks or retry). */
+    onsend: (req: SendReq, replyPreview: Message | null) => void;
   }
-  let { chat, replyTo, confirmSends, oncancelreply, onsent }: Props = $props();
+  let { chat, replyTo, confirmSends, oncancelreply, onsend }: Props = $props();
 
   let text = $state("");
   let attachment = $state<string | null>(null);
-  let sending = $state(false);
   let confirming = $state(false);
   let textarea: HTMLTextAreaElement | undefined = $state();
 
-  const canSend = $derived(!sending && (text.trim().length > 0 || attachment !== null));
+  const canSend = $derived(text.trim().length > 0 || attachment !== null);
 
   // Reset draft when switching chats.
   let lastJid = "";
   $effect(() => {
     if (chat.jid !== lastJid) {
       lastJid = chat.jid;
-      text = "";
+      text = loadDraft(chat.jid);
       attachment = null;
+      queueMicrotask(autosize);
     }
   });
 
@@ -52,32 +54,23 @@
     else void doSend();
   }
 
-  async function doSend() {
+  function doSend() {
     confirming = false;
-    sending = true;
-    try {
-      const res = await api.sendMessage({
-        recipient: chat.jid,
-        text: text.trim() ? text : null,
-        attachment,
-        reply_to: replyTo?.id ?? null,
-        mentions: [],
-      });
-      if (!res.ok) {
-        toasts.push({ kind: "error", title: "Not sent", message: res.message });
-        return;
-      }
-      text = "";
-      attachment = null;
-      oncancelreply();
-      onsent?.();
-      queueMicrotask(autosize);
-    } catch (e) {
-      toasts.error(e, "Message not sent");
-    } finally {
-      sending = false;
-      textarea?.focus();
-    }
+    const req: SendReq = {
+      recipient: chat.jid,
+      text: text.trim() ? text : null,
+      attachment,
+      reply_to: replyTo?.id ?? null,
+      mentions: [],
+    };
+    const quoted = replyTo;
+    text = "";
+    attachment = null;
+    clearDraft(chat.jid);
+    oncancelreply();
+    queueMicrotask(autosize);
+    onsend(req, quoted);
+    textarea?.focus();
   }
 
   async function attach() {
@@ -127,17 +120,20 @@
     <textarea
       bind:this={textarea}
       bind:value={text}
-      oninput={autosize}
+      oninput={() => {
+        autosize();
+        saveDraft(chat.jid, text);
+      }}
       onkeydown={onKey}
       rows="1"
       class="input max-h-44 min-h-9 flex-1 resize-none py-2 leading-snug"
-      placeholder="Message {chat.name}"
+      placeholder="Message {chatLabel(chat)}"
       aria-label="Message"
       dir="auto"
       data-testid="composer-input"
     ></textarea>
     <button class="btn btn-primary h-9 w-9 shrink-0 p-0" aria-label="Send" disabled={!canSend} onclick={requestSend} data-testid="send-btn">
-      {#if sending}<Spinner size={16} label="Sending" />{:else}<SendHorizontal size={17} />{/if}
+      <SendHorizontal size={17} />
     </button>
   </div>
   <p class="mt-1 hidden text-[11px] text-faint sm:block">Enter to send · Shift+Enter for a new line</p>
@@ -147,7 +143,7 @@
   <Modal title="Send this message?" onclose={() => (confirming = false)}>
     <div class="space-y-2 text-[13px]" data-testid="confirm-send">
       <p>
-        {#if chat.is_group}You're about to send to the group <strong>{chat.name}</strong>. Everyone in it will see this.{:else}You're about to send to <strong>{chat.name}</strong>.{/if}
+        {#if chat.is_group}You're about to send to the group <strong>{chatLabel(chat)}</strong>. Everyone in it will see this.{:else}You're about to send to <strong>{chatLabel(chat)}</strong>.{/if}
       </p>
       {#if attachment}<p class="text-muted">Attachment: <span class="font-medium text-fg">{baseName(attachment)}</span></p>{/if}
       {#if text.trim()}<blockquote class="max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-surface-2 p-2 text-muted">{text}</blockquote>{/if}
