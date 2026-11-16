@@ -32,7 +32,7 @@ Calling conventions:
 | `forward_messages` | `{ req: ForwardReq }` | `SendResult[]` (one per message × target; never more than 5 targets) |
 | `copy_messages_text` | `{ chatJid, messageIds: string[] }` | `string`: WhatsApp-style "[time] Name: text" lines for the clipboard |
 | `refresh_chat_names` | none | `number`: how many chat names were fixed from bridge metadata (groups, communities, channels) |
-| `list_calls` | `{ query: CallQuery }` | `Page<CallRecord>` (newest first). Calls also appear inline in `get_messages`? No: the UI merges `list_calls({chat_jid})` into the thread by time |
+| `list_calls` | `{ query: CallQuery }` | `Page<CallRecord>` (newest first). Not part of `get_messages`: the UI merges `list_calls` for the open chat into the thread by time |
 | `reject_call` | `{ callId, callerJid }` | `void`: declines a ringing call (bridge `RejectCall`); `invalid` if it is not ringing |
 | `send_message` | `{ req: SendReq }` | `SendResult` |
 | `react` | `{ req: ReactReq }` | `void` |
