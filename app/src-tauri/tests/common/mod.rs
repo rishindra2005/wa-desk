@@ -244,6 +244,7 @@ pub async fn start_mock() -> (String, Mock) {
         .route("/api/send", post(ok))
         .route("/api/react", post(ok))
         .route("/api/mark-read", post(ok))
+        .route("/api/call/reject", post(ok))
         .route("/api/download", post(download))
         .route("/api/profile", get(profile))
         .route("/api/group", get(group))
