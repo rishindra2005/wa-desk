@@ -27,6 +27,7 @@
     app.openChatJid = c.jid;
     wasUnread = c.unread;
     chat = c;
+    if (app.profileJid && app.profileJid !== c.jid) app.openProfile(c.jid);
     void markRead(c);
   }
 
@@ -39,6 +40,7 @@
         if (app.openChatJid === jid) {
           wasUnread = c.unread;
           chat = c;
+          if (app.profileJid && app.profileJid !== c.jid) app.openProfile(c.jid);
           void markRead(c);
         }
       },

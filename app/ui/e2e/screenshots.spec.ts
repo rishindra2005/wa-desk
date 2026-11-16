@@ -34,9 +34,16 @@ async function prepare(page: Page, view: (typeof VIEWS)[number]) {
   await page.waitForTimeout(400);
 }
 
+async function openChat(page: Page, name: string) {
+  await page.getByTestId("chat-filter").fill(name);
+  await page.getByTestId("chat-row").filter({ hasText: name }).first().click();
+  await expect(page.getByTestId("thread-title")).toContainText(name);
+  await expect(page.getByTestId("message").first()).toBeVisible();
+}
+
 for (const scheme of ["light", "dark"] as const) {
   test(`screenshots (${scheme})`, async ({ page }) => {
-    test.setTimeout(90_000);
+    test.setTimeout(120_000);
     await page.emulateMedia({ colorScheme: scheme, reducedMotion: "reduce" });
     await page.goto("/?quiet");
     await expect(page.getByTestId("chat-row").first()).toBeVisible();
@@ -44,5 +51,34 @@ for (const scheme of ["light", "dark"] as const) {
       await prepare(page, v);
       await page.screenshot({ path: `screenshots/${v}-${scheme}.png` });
     }
+
+    // Profile drawer: contact, then group.
+    await page.getByTestId("nav-chats").click();
+    await openChat(page, "Ananya Rao");
+    await page.getByTestId("thread-header").click();
+    await expect(page.getByTestId("profile-name")).toHaveText("Ananya Rao");
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: `screenshots/profile-contact-${scheme}.png` });
+
+    await openChat(page, "Startup Founders");
+    await expect(page.getByTestId("profile-subtitle")).toContainText("250 participants");
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: `screenshots/profile-group-${scheme}.png` });
+    await page.getByTestId("profile-close").click();
+
+    // Context menu on a message.
+    await openChat(page, "Ananya Rao");
+    await page.getByTestId("message").last().click({ button: "right", position: { x: 40, y: 10 } });
+    await expect(page.getByTestId("context-menu")).toBeVisible();
+    await page.screenshot({ path: `screenshots/context-menu-${scheme}.png` });
+    await page.keyboard.press("Escape");
+
+    // Selection mode.
+    await page.getByTestId("message").last().click({ button: "right", position: { x: 40, y: 10 } });
+    await page.getByTestId("menu-select").click();
+    await page.getByTestId("message").nth(-2).click();
+    await expect(page.getByTestId("selection-bar")).toBeVisible();
+    await page.mouse.move(1000, 30);
+    await page.screenshot({ path: `screenshots/selection-${scheme}.png` });
   });
 }

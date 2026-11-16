@@ -634,6 +634,8 @@ const DESCRIPTIONS: Record<string, string> = {
 };
 const ABOUTS = ["Hey there! I am using WhatsApp.", "Busy", "At work", "Living my best life 🌈", "Available", "In a meeting", "Battery about to die", "कर्म करो, फल की चिंता मत करो"];
 const GROUP_SIZES = [6, 38, 120, 7, 45, 12, 3, 14, 24, 16, 250, 9];
+const NAME_SIZES: Record<string, number> = {};
+GROUPS.forEach((n, i) => (NAME_SIZES[n] = GROUP_SIZES[i] ?? 8));
 
 /** Status of own messages: mostly read, voice notes played, recent ones vary. */
 function decorate(msgs: Message[], g: Gen): void {
@@ -661,7 +663,8 @@ function baseChat(
 ): Omit<MockChat, "jid" | "name" | "is_group" | "unread" | "messages"> {
   const dad = entry.c?.name === "Dad";
   const hasAvatar = type === "channel" || type === "community" ? true : dad ? false : hashString(jid) % 4 !== 0;
-  if (entry.size) SIZES.set(jid, entry.size);
+  const sz = entry.size ?? (entry.name ? NAME_SIZES[entry.name] : undefined);
+  if (sz) SIZES.set(jid, sz);
   return {
     chat_type: type,
     parent,
@@ -719,7 +722,7 @@ function finishChats(chats: MockChat[], now: number): void {
     }
     out.length = Math.min(out.length, Math.max(1, target - 1));
     out.sort((a, b) => a.name.localeCompare(b.name));
-    out.unshift({ jid: phoneJid("919845012345"), name: "You", phone: formatPhoneLite("919845012345"), is_admin: true, is_super_admin: true, is_me: true, avatar_url: "" });
+    out.unshift({ jid: phoneJid("919000011111"), name: "You", phone: formatPhoneLite("919000011111"), is_admin: true, is_super_admin: true, is_me: true, avatar_url: "" });
     const admins = Math.max(1, Math.floor(target / 40) + 1);
     for (let k = 1; k <= admins; k++) {
       const p = out[k];

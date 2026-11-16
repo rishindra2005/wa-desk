@@ -1,6 +1,6 @@
 <!-- Profile picture with lazy loading, fade-in and an initials / type-icon fallback (failures are cached). -->
 <script lang="ts">
-  import { Users, Megaphone, Radio, Network } from "@lucide/svelte";
+  import { Users, Megaphone, Radio, Network, User } from "@lucide/svelte";
   import type { ChatType } from "../bindings/ChatType";
   import { avatarUrl, avatarFailed, avatarLoaded, markAvatarFailed, markAvatarLoaded } from "../avatar";
   import { colorHue } from "../utils/misc";
@@ -49,6 +49,7 @@
       {:else if kind === "community"}<Network size={iconSize} data-testid="avatar-icon" />
       {:else if kind === "channel"}<Megaphone size={iconSize} data-testid="avatar-icon" />
       {:else if kind === "broadcast"}<Radio size={iconSize} data-testid="avatar-icon" />
+      {:else if text === "#"}<User size={iconSize} data-testid="avatar-icon" />
       {:else}<span data-testid="avatar-initials">{text}</span>{/if}
     {/if}
     {#if src && !failed}
@@ -59,12 +60,12 @@
         decoding="async"
         draggable="false"
         class="absolute inset-0 h-full w-full object-cover transition-opacity duration-200 {ready ? 'opacity-100' : 'opacity-0'}"
-        onload={() => {
-          markAvatarLoaded(src);
+        onload={(e) => {
+          markAvatarLoaded(e.currentTarget.getAttribute("src") ?? "");
           ready = true;
         }}
-        onerror={() => {
-          markAvatarFailed(src);
+        onerror={(e) => {
+          markAvatarFailed(e.currentTarget.getAttribute("src") ?? "");
           failedTick++;
         }}
       />

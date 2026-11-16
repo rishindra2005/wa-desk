@@ -116,13 +116,15 @@
     let prev: Message | null = null;
     const now = Date.now();
     let unreadShown = false;
+    let idx = -1;
     for (const m of allMessages) {
+      idx++;
       const dk = dayKey(m.ts);
       const newDay = !prev || dayKey(prev.ts) !== dk;
       if (newDay) out.push({ kind: "day", key: `d:${dk}`, label: dayLabel(m.ts, now) });
       if (!unreadShown && unreadFromId === m.id) {
         unreadShown = true;
-        const n = allMessages.slice(allMessages.indexOf(m)).filter((x) => !x.is_from_me).length;
+        const n = allMessages.slice(idx).filter((x) => !x.is_from_me).length;
         out.push({ kind: "unread", key: "unread", label: `${n} unread message${n === 1 ? "" : "s"}` });
       }
       const sameSender =

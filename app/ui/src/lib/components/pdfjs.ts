@@ -25,6 +25,8 @@ export function getPdfjs(): Promise<Loaded> {
 
 /** Start loading pdf.js when the browser is idle so the first PDF preview opens instantly. */
 export function warmPdfjs(): void {
+  // In dev, pdf.js's bundled polyfills trip Svelte's array-proxy warning; production only.
+  if (!import.meta.env.PROD) return;
   const run = () => void getPdfjs().catch(() => {});
   const w = window as unknown as { requestIdleCallback?: (cb: () => void) => void };
   if (w.requestIdleCallback) w.requestIdleCallback(run);

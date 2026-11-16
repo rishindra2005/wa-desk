@@ -648,7 +648,7 @@ export class MockBackend {
     const phone = jid.endsWith("@s.whatsapp.net") ? jid.split("@")[0] ?? "" : "";
     const contact = CONTACTS.find((x) => x.phone === phone);
     const fromGroup = this.chats.flatMap((x) => x.participants).find((p) => p.jid === jid);
-    const isMe = phone === "919845012345";
+    const isMe = phone === "919000011111";
     const common = this.chats
       .filter((g) => (g.chat_type === "group" || g.chat_type === "community") && g.participants.some((p) => p.jid === jid))
       .map((g) => this.ref(g));
