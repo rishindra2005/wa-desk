@@ -257,8 +257,13 @@ async fn main() {
     }
     let a = timed_get(&core, "wa-media://localhost/a/status%40broadcast", None).await;
     println!("avatar status@broadcast: {:.1} ms HTTP {}", a.0, a.1);
-    if let Some(g) = rows.iter().find(|r| r.chat_jid.ends_with("@g.us")) {
-        let url = wa_db::media::avatar_url(&g.chat_jid);
+    let group = std::env::var("WA_BENCH_AVATAR").ok().or_else(|| {
+        rows.iter()
+            .find(|r| r.chat_jid.ends_with("@g.us"))
+            .map(|r| r.chat_jid.clone())
+    });
+    if let Some(g) = group {
+        let url = wa_db::media::avatar_url(&g);
         let a = timed_get(&core, &url, None).await;
         let b = timed_get(&core, &url, None).await;
         println!(
