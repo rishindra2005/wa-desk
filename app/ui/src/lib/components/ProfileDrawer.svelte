@@ -1,5 +1,6 @@
 <!-- Right-side info drawer: contact / group / community / channel details, with chat-scoped media, docs, links and starred. -->
 <script lang="ts">
+  import { untrack } from "svelte";
   import {
     X, ArrowLeft, Copy, Search, FileDown, MessageSquare, BadgeCheck, Lock, Megaphone, Users, Link as LinkIcon,
     Star, FileText, Images, Mail, Globe, MapPin, Briefcase, ChevronRight, Network, Phone, PhoneIncoming, PhoneMissed, PhoneOff, PhoneOutgoing, Video,
@@ -76,7 +77,7 @@
 
   $effect(() => {
     const j = jid;
-    if (j) void load(j);
+    if (j) untrack(() => void load(j));
   });
 
   async function loadTab(reset = false) {

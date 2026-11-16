@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { Plus, Bot, TriangleAlert, Pencil, Zap } from "@lucide/svelte";
   import * as api from "../../api";
   import type { Rule } from "../../bindings/Rule";
@@ -36,7 +37,7 @@
   }
 
   $effect(() => {
-    void load();
+    untrack(() => void load());
     return api.subscribe("automation:fired", (e) => {
       log = [e, ...log].slice(0, 200);
       const r = rules.find((x) => x.id === e.rule_id);

@@ -1,5 +1,6 @@
 <!-- Preview a message's document via preview_doc (office → PDF), with instant placeholders and Convert. -->
 <script lang="ts">
+  import { untrack } from "svelte";
   import { FileQuestion } from "@lucide/svelte";
   import * as api from "../api";
   import type { MediaRef } from "../bindings/MediaRef";
@@ -54,7 +55,8 @@
   }
 
   $effect(() => {
-    void load(chatJid, messageId);
+    const [c, m] = [chatJid, messageId];
+    untrack(() => void load(c, m));
   });
 </script>
 

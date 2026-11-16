@@ -1,5 +1,6 @@
 <!-- Call log: incoming / missed / outgoing calls recorded by the bridge. Calls can't be placed or answered here. -->
 <script lang="ts">
+  import { untrack } from "svelte";
   import { Phone, PhoneIncoming, PhoneMissed, PhoneOff, PhoneOutgoing, Video, Users, Info, MessageSquare, Copy, Contact } from "@lucide/svelte";
   import * as api from "../../api";
   import type { CallRecord } from "../../bindings/CallRecord";
@@ -74,10 +75,14 @@
 
   const reload = debounce(() => void load(), 150);
 
+  // Runs once on mount: load() and markSeen() read and write state, so they must not
+  // become dependencies of this effect (that re-ran it after every load, forever).
   $effect(() => {
-    void load();
-    calls.viewing = true;
-    calls.markSeen();
+    untrack(() => {
+      void load();
+      calls.viewing = true;
+      calls.markSeen();
+    });
     const un = api.subscribe("call:update", () => {
       reload();
       calls.markSeen();

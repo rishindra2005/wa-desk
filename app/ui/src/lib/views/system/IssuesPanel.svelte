@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { CircleCheck, PackageOpen, FolderOpen, ExternalLink, Trash2, ChevronRight, ShieldCheck } from "@lucide/svelte";
   import * as api from "../../api";
   import type { Issue } from "../../bindings/Issue";
@@ -33,7 +34,7 @@
   }
 
   $effect(() => {
-    void load();
+    untrack(() => void load());
     return api.subscribe("issue:new", () => void load());
   });
 

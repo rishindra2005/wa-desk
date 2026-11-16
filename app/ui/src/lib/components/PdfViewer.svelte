@@ -4,7 +4,7 @@
   The worker is a bundled file (CSP: worker-src 'self' blob:).
 -->
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { ZoomIn, ZoomOut, ChevronUp, ChevronDown, MoveHorizontal } from "@lucide/svelte";
   import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask, TextLayer } from "pdfjs-dist/legacy/build/pdf.mjs";
   import { getPdfjs } from "./pdfjs";
@@ -57,7 +57,8 @@
   }
 
   $effect(() => {
-    void load(url);
+    const u = url;
+    untrack(() => void load(u));
   });
 
   onDestroy(() => {

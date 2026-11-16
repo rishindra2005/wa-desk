@@ -22,6 +22,24 @@ async function openCalls(page: Page) {
 }
 
 test.describe("calls log", () => {
+  test("opening the log does not re-query in a loop", async ({ page }) => {
+    await boot(page);
+    // Count list_calls requests (the view's mount effect once looped on its own load).
+    await page.evaluate(() => {
+      const m = window.__waMock as unknown as { handle: (cmd: string, a: unknown) => unknown; __n?: number };
+      const orig = m.handle.bind(m);
+      m.__n = 0;
+      m.handle = (cmd: string, a: unknown) => {
+        if (cmd === "list_calls") m.__n = (m.__n ?? 0) + 1;
+        return orig(cmd, a);
+      };
+    });
+    await openCalls(page);
+    await page.waitForTimeout(2000);
+    const n = await page.evaluate(() => (window.__waMock as unknown as { __n: number }).__n);
+    expect(n).toBeLessThanOrEqual(4);
+  });
+
   test("shows the log with icons, group badges, and filters", async ({ page }) => {
     await boot(page);
     // Missed calls since the last visit show as a badge, which clears on visit.
