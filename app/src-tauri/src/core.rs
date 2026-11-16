@@ -601,8 +601,13 @@ impl AppCore {
 
     /// `open_media_external`.
     pub async fn open_media_external(&self, chat_jid: String, message_id: String) -> Result<()> {
-        let (_, path) = self.local_media(&chat_jid, &message_id).await?;
-        self.platform.open_path(&path)
+        let (r, path) = self.local_media(&chat_jid, &message_id).await?;
+        // The bridge stores documents without an extension, so the desktop would
+        // sniff the content (docx/pptx/xlsx are zips → archive manager). Open a
+        // properly named hard link / copy in the cache instead.
+        let cache = self.paths.cache.join("open");
+        let named = blocking(move || named_open_copy(&cache, &message_id, &r, &path)).await?;
+        self.platform.open_path(&named)
     }
 
     /// `save_media_as`: copy the file to a user-chosen absolute destination.
@@ -1369,5 +1374,125 @@ mod tests {
         assert!(same_bridge_state(&a, &b));
         b.paired = false;
         assert!(!same_bridge_state(&a, &b));
+    }
+}
+
+/// File name to present a media file under: the original name when known, with
+/// an extension guaranteed (from the MIME type, else the media kind).
+pub fn open_file_name(r: &MediaRef, message_id: &str) -> String {
+    let base = r
+        .filename
+        .as_deref()
+        .map(wa_core::paths::sanitize_file_name)
+        .filter(|n| !n.is_empty() && n != "file")
+        .unwrap_or_else(|| format!("whatsapp-{message_id}"));
+    if Path::new(&base)
+        .extension()
+        .is_some_and(|e| !e.is_empty() && e.len() <= 5)
+    {
+        return base;
+    }
+    let from_mime = r
+        .mime
+        .as_deref()
+        .and_then(|m| mime_guess::get_mime_extensions_str(m))
+        .and_then(|exts| {
+            // Prefer the conventional extension when the MIME has several.
+            [
+                "pdf", "docx", "pptx", "xlsx", "doc", "jpg", "png", "mp4", "ogg", "webp", "mp3",
+                "zip", "txt",
+            ]
+            .into_iter()
+            .find(|p| exts.contains(p))
+            .or_else(|| exts.first().copied())
+        });
+    let ext = from_mime.unwrap_or(match r.kind {
+        MediaKind::Image => "jpg",
+        MediaKind::Video => "mp4",
+        MediaKind::Audio => "ogg",
+        MediaKind::Sticker => "webp",
+        MediaKind::Document => "bin",
+    });
+    format!("{base}.{ext}")
+}
+
+/// Hard-link (or copy) `src` to `<cache>/<msgid>/<name>` and return that path.
+/// Reuses an existing link/copy of the same size.
+pub fn named_open_copy(
+    cache: &Path,
+    message_id: &str,
+    r: &MediaRef,
+    src: &Path,
+) -> Result<PathBuf> {
+    let dir = cache.join(wa_core::paths::sanitize_file_name(message_id));
+    std::fs::create_dir_all(&dir)?;
+    let dest = dir.join(open_file_name(r, message_id));
+    let src_len = std::fs::metadata(src)?.len();
+    if std::fs::metadata(&dest).is_ok_and(|m| m.len() == src_len) {
+        return Ok(dest);
+    }
+    let _ = std::fs::remove_file(&dest);
+    if std::fs::hard_link(src, &dest).is_err() {
+        std::fs::copy(src, &dest)?;
+    }
+    Ok(dest)
+}
+
+#[cfg(test)]
+mod open_name_tests {
+    use super::*;
+    use wa_core::types::MediaSource;
+
+    fn mref(kind: MediaKind, filename: Option<&str>, mime: Option<&str>) -> MediaRef {
+        MediaRef {
+            kind,
+            filename: filename.map(Into::into),
+            size: None,
+            mime: mime.map(Into::into),
+            source: MediaSource::Store,
+            url: None,
+            thumb_url: None,
+        }
+    }
+
+    #[test]
+    fn keeps_original_name_with_extension() {
+        let r = mref(MediaKind::Document, Some("SE_Module 2.pptx"), None);
+        assert_eq!(open_file_name(&r, "X"), "SE_Module 2.pptx");
+    }
+
+    #[test]
+    fn adds_extension_from_mime_or_kind() {
+        let r = mref(
+            MediaKind::Document,
+            Some("Notes"),
+            Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        );
+        assert_eq!(open_file_name(&r, "X"), "Notes.docx");
+        let r = mref(MediaKind::Document, None, Some("application/pdf"));
+        assert_eq!(open_file_name(&r, "AB12"), "whatsapp-AB12.pdf");
+        let r = mref(MediaKind::Image, None, None);
+        assert_eq!(open_file_name(&r, "AB12"), "whatsapp-AB12.jpg");
+        let r = mref(MediaKind::Document, Some("../../etc/passwd"), None);
+        assert_eq!(open_file_name(&r, "X"), "passwd.bin");
+    }
+
+    #[test]
+    fn links_and_reuses() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("document_20261115_101010_ABC");
+        std::fs::write(&src, b"PK\x03\x04docx").unwrap();
+        let r = mref(MediaKind::Document, Some("Report.docx"), None);
+        let cache = d.path().join("open");
+        let p1 = named_open_copy(&cache, "ABC", &r, &src).unwrap();
+        assert!(p1.ends_with("ABC/Report.docx"));
+        assert_eq!(std::fs::read(&p1).unwrap(), b"PK\x03\x04docx");
+        let p2 = named_open_copy(&cache, "ABC", &r, &src).unwrap();
+        assert_eq!(p1, p2);
+        assert!(
+            named_open_copy(&cache, "../evil", &r, &src)
+                .unwrap()
+                .starts_with(&cache)
+        );
     }
 }
