@@ -22,16 +22,20 @@ pub mod app_db;
 pub mod bridge_ro;
 pub mod chats;
 pub mod indexer;
+pub mod insights;
 pub mod media;
 pub mod messages;
 pub mod names;
 pub mod raw;
+mod receipts;
 pub mod search;
 mod util;
 pub mod watcher;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_v2;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -43,15 +47,16 @@ use wa_core::config::Paths;
 use wa_core::time::{epoch_to_rfc3339, now_epoch};
 use wa_core::traits::{AppStore, IncomingMessage, LinkRecord, LinkStore, MediaInfo, MessageStore};
 use wa_core::types::{
-    AutomationEvent, ChatQuery, ChatSummary, JobRecord, MediaItem, MediaKind, MediaQuery, Message,
-    MessagesQuery, Overview, Page, Rule, SearchQuery, SearchResults, Settings,
+    AutomationEvent, ChatQuery, ChatRef, ChatStats, ChatSummary, JobRecord, LinkItem, MediaItem,
+    MediaKind, MediaQuery, Message, MessagesQuery, Overview, Page, Rule, SearchHit, SearchQuery,
+    SearchResults, Settings,
 };
 use wa_core::{AppError, Result};
 
 pub use app_db::AppDb;
 pub use bridge_ro::{RoConn, RoPool};
 pub use indexer::{Indexer, ReconcileStats};
-pub use names::{NameCache, NameResolver};
+pub use names::{ChatMeta, NameCache, NameResolver};
 pub use watcher::{WatchOutcome, Watcher};
 
 use crate::bridge_ro::DEFAULT_DEADLINE;
@@ -227,6 +232,46 @@ impl Db {
     /// Dashboard numbers.
     pub fn overview(&self) -> Result<Overview> {
         overview(&self.core)
+    }
+
+    /// Messages of one chat by id, ascending (unknown ids skipped).
+    pub fn messages_by_ids(&self, chat_jid: &str, ids: &[String]) -> Result<Vec<Message>> {
+        messages::messages_by_ids(&self.core, chat_jid, ids)
+    }
+
+    /// Links in one chat (or all), newest first; cursor `"ts:rowid:skip"`.
+    pub fn list_links(
+        &self,
+        chat_jid: Option<&str>,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<Page<LinkItem>> {
+        insights::list_links(&self.core, chat_jid, cursor, limit)
+    }
+
+    /// Info-panel counts for a chat.
+    pub fn chat_stats(&self, chat_jid: &str) -> Result<ChatStats> {
+        insights::chat_stats(&self.core, chat_jid)
+    }
+
+    /// Star or unstar messages (stored in app.db).
+    pub fn set_starred(&self, chat_jid: &str, ids: &[String], starred: bool) -> Result<()> {
+        insights::set_starred(&self.core, chat_jid, ids, starred)
+    }
+
+    /// Starred messages newest first; offset cursor.
+    pub fn list_starred(
+        &self,
+        chat_jid: Option<&str>,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<Page<SearchHit>> {
+        insights::list_starred(&self.core, chat_jid, cursor, limit)
+    }
+
+    /// Groups in which `jid` has written (from the index).
+    pub fn common_groups(&self, jid: &str) -> Result<Vec<ChatRef>> {
+        insights::common_groups(&self.core, jid)
     }
 }
 

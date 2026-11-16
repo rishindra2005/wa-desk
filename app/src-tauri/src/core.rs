@@ -687,6 +687,7 @@ impl AppCore {
             .get_messages(MessagesQuery {
                 chat_jid: chat_jid.clone(),
                 before: None,
+                after: None,
                 limit: Some(MARK_READ_CAP as u32),
             })
             .await?;

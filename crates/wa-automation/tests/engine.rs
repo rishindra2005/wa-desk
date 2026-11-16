@@ -225,6 +225,8 @@ fn msg_at(id: &str, chat: &str, sender: &str, content: &str, ts: i64) -> Message
         quoted: None,
         reactions: vec![],
         deleted: false,
+        status: None,
+        starred: false,
     }
 }
 

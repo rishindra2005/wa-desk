@@ -90,6 +90,17 @@ CREATE INDEX msg_index_ts ON msg_index(ts);
 CREATE INDEX msg_index_sender ON msg_index(sender_jid);
 CREATE VIRTUAL TABLE msg_fts USING fts5(content, filename, tokenize = 'trigram');
 "#,
+    // v2: local bookmarks ("starred")
+    r#"
+CREATE TABLE starred (
+    chat_jid TEXT NOT NULL,
+    id TEXT NOT NULL,
+    ts INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_jid, id)
+);
+CREATE INDEX starred_ts ON starred(ts);
+"#,
 ];
 
 /// One row of the search index (FTS rowid = `msg_index.rowid`).
@@ -331,6 +342,105 @@ impl AppDb {
             c.query_row("SELECT count(*) FROM phone_links", [], |r| {
                 r.get::<_, i64>(0)
             })
+        })
+        .map(|n| n.max(0) as u64)
+    }
+}
+
+impl AppDb {
+    // ---------- starred ----------
+
+    /// Star (upsert with the message time) or unstar messages of one chat.
+    pub fn set_starred(
+        &self,
+        chat_jid: &str,
+        items: &[(String, i64)],
+        starred: bool,
+    ) -> Result<()> {
+        let now = now_epoch();
+        self.write(|tx| {
+            if starred {
+                let mut st = tx.prepare_cached(
+                    "INSERT INTO starred (chat_jid, id, ts, created_at) VALUES (?1,?2,?3,?4)
+                     ON CONFLICT(chat_jid, id) DO UPDATE SET ts=excluded.ts",
+                )?;
+                for (id, ts) in items {
+                    st.execute(params![chat_jid, id, ts, now])?;
+                }
+            } else {
+                let mut st =
+                    tx.prepare_cached("DELETE FROM starred WHERE chat_jid=?1 AND id=?2")?;
+                for (id, _) in items {
+                    st.execute(params![chat_jid, id])?;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// Which of `ids` (in `chat_jid`) are starred.
+    pub fn starred_among(
+        &self,
+        chat_jid: &str,
+        ids: &[&str],
+    ) -> Result<std::collections::HashSet<String>> {
+        if ids.is_empty() {
+            return Ok(Default::default());
+        }
+        self.read(|c| {
+            let mut out = std::collections::HashSet::new();
+            for chunk in ids.chunks(400) {
+                let sql = format!(
+                    "SELECT id FROM starred WHERE chat_jid = ? AND id IN ({})",
+                    crate::util::placeholders(chunk.len())
+                );
+                let mut st = c.prepare_cached(&sql)?;
+                let p = std::iter::once(chat_jid).chain(chunk.iter().copied());
+                let rows =
+                    st.query_map(rusqlite::params_from_iter(p), |r| r.get::<_, String>(0))?;
+                for r in rows {
+                    out.insert(r?);
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    /// Starred keys newest first: `(chat_jid, id, ts)`, offset paging.
+    pub fn starred_page(
+        &self,
+        chat_jid: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<(String, String, i64)>> {
+        self.read(|c| {
+            let map = |r: &rusqlite::Row<'_>| Ok((r.get(0)?, r.get(1)?, r.get(2)?));
+            match chat_jid {
+                Some(j) => c
+                    .prepare_cached(
+                        "SELECT chat_jid, id, ts FROM starred WHERE chat_jid = ?1
+                         ORDER BY ts DESC, id DESC LIMIT ?2 OFFSET ?3",
+                    )?
+                    .query_map(params![j, limit as i64, offset as i64], map)?
+                    .collect(),
+                None => c
+                    .prepare_cached(
+                        "SELECT chat_jid, id, ts FROM starred ORDER BY ts DESC, chat_jid, id DESC LIMIT ?1 OFFSET ?2",
+                    )?
+                    .query_map(params![limit as i64, offset as i64], map)?
+                    .collect(),
+            }
+        })
+    }
+
+    /// Number of starred messages in a chat.
+    pub fn starred_count(&self, chat_jid: &str) -> Result<u64> {
+        self.read(|c| {
+            c.query_row(
+                "SELECT count(*) FROM starred WHERE chat_jid = ?1",
+                [chat_jid],
+                |r| r.get::<_, i64>(0),
+            )
         })
         .map(|n| n.max(0) as u64)
     }

@@ -47,6 +47,7 @@ fn thread(db: &Db, jid: &str) -> Vec<Message> {
     db.get_messages(&MessagesQuery {
         chat_jid: jid.into(),
         before: None,
+        after: None,
         limit: Some(500),
     })
     .unwrap()
@@ -475,6 +476,7 @@ fn thread_paging_1200_stable_no_dupes_or_gaps() {
                 .get_messages(&MessagesQuery {
                     chat_jid: GROUP_CLASS.into(),
                     before: cursor.clone(),
+                    after: None,
                     limit: Some(77),
                 })
                 .unwrap();
@@ -507,6 +509,7 @@ fn thread_paging_1200_stable_no_dupes_or_gaps() {
         let q = MessagesQuery {
             chat_jid: GROUP_CLASS.into(),
             before: c,
+            after: None,
             limit: Some(10),
         };
         assert_eq!(db.get_messages(&q).unwrap(), db.get_messages(&q).unwrap());
@@ -521,6 +524,7 @@ fn bad_cursor_and_empty_chat_jid() {
         .get_messages(&MessagesQuery {
             chat_jid: DM_ALICE.into(),
             before: Some("nope".into()),
+            after: None,
             limit: None,
         })
         .unwrap_err();
@@ -1461,6 +1465,7 @@ fn long_read_does_not_block_bridge_writer() {
             d2.get_messages(&MessagesQuery {
                 chat_jid: GROUP_CLASS.into(),
                 before: None,
+                after: None,
                 limit: Some(50),
             })
             .unwrap();
