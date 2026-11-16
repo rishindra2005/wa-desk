@@ -33,6 +33,105 @@ pub struct DownloadOutcome {
     pub filename: String,
 }
 
+// ---------- bridge metadata (docs/BRIDGE_API.md) ----------
+
+/// `business` of `GET /api/profile`.
+#[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct BridgeBusiness {
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub email: Option<String>,
+    pub website: Option<String>,
+    pub address: Option<String>,
+}
+
+/// `GET /api/profile?jid=`.
+#[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct BridgeProfile {
+    pub jid: String,
+    pub push_name: Option<String>,
+    pub verified_name: Option<String>,
+    pub about: Option<String>,
+    pub picture_id: Option<String>,
+    pub business: Option<BridgeBusiness>,
+}
+
+/// One participant of `GET /api/group`.
+#[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct BridgeParticipant {
+    pub jid: String,
+    pub phone_jid: Option<String>,
+    pub lid: Option<String>,
+    pub is_admin: bool,
+    pub is_super_admin: bool,
+    pub display_name: Option<String>,
+}
+
+/// `{jid, name}` entry of `sub_groups`.
+#[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct BridgeSubGroup {
+    pub jid: String,
+    pub name: Option<String>,
+}
+
+/// `GET /api/group?jid=`.
+#[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct BridgeGroup {
+    pub jid: String,
+    pub name: Option<String>,
+    pub topic: Option<String>,
+    /// RFC3339 creation time.
+    pub created_at: Option<String>,
+    pub creator: Option<String>,
+    pub is_parent: bool,
+    pub linked_parent_jid: Option<String>,
+    pub announce: bool,
+    pub locked: bool,
+    pub participants: Vec<BridgeParticipant>,
+    pub sub_groups: Vec<BridgeSubGroup>,
+}
+
+/// `GET /api/newsletter?jid=`.
+#[derive(Debug, Clone, PartialEq, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct BridgeNewsletter {
+    pub jid: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub subscribers: Option<u64>,
+    pub verified: bool,
+    pub picture_id: Option<String>,
+}
+
+/// `GET /api/avatar`: a cached picture file in the bridge store.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeAvatar {
+    pub path: PathBuf,
+    pub picture_id: Option<String>,
+}
+
+/// `POST /api/chats/refresh`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct RefreshStats {
+    pub groups: u32,
+    pub communities: u32,
+    pub channels: u32,
+    pub renamed: u32,
+    pub cached: bool,
+}
+
+fn unsupported<T>() -> Result<T> {
+    Err(crate::error::AppError::not_found(
+        "This bridge does not support that request",
+    ))
+}
+
 #[async_trait]
 pub trait BridgeApi: Send + Sync {
     /// GET /api/connection (Unreachable state if the bridge is down — never Err for that).
@@ -61,6 +160,27 @@ pub trait BridgeApi: Send + Sync {
         message_ids: &[String],
         sender_jid: Option<&str>,
     ) -> Result<()>;
+
+    /// GET /api/profile (contacts). `NotFound` when the bridge lacks it.
+    async fn profile(&self, _jid: &str) -> Result<BridgeProfile> {
+        unsupported()
+    }
+    /// GET /api/group (groups and communities).
+    async fn group(&self, _jid: &str) -> Result<BridgeGroup> {
+        unsupported()
+    }
+    /// GET /api/newsletter (channels).
+    async fn newsletter(&self, _jid: &str) -> Result<BridgeNewsletter> {
+        unsupported()
+    }
+    /// GET /api/avatar: `NotFound` when the chat has no picture.
+    async fn avatar(&self, _jid: &str, _full: bool) -> Result<BridgeAvatar> {
+        unsupported()
+    }
+    /// POST /api/chats/refresh: names/types of groups, communities, channels.
+    async fn refresh_chats(&self) -> Result<RefreshStats> {
+        unsupported()
+    }
 }
 
 // ---------- message data (read side of messages.db) ----------

@@ -112,6 +112,88 @@ async fn ok_json(State(m): State<Mock>, axum::Json(body): axum::Json<Value>) -> 
     axum::Json(json!({"success": true, "message": "done", "ok": true})).into_response()
 }
 
+#[derive(serde::Deserialize)]
+struct JidQ {
+    jid: String,
+    full: Option<String>,
+}
+
+async fn profile(axum::extract::Query(q): axum::extract::Query<JidQ>) -> Response {
+    match q.jid.as_str() {
+        "919811111111@s.whatsapp.net" => axum::Json(json!({
+            "jid": q.jid, "push_name": "Ally", "verified_name": null, "about": "Busy",
+            "about_set_at": null, "picture_id": "123", "devices": [0, 5],
+            "business": {"description": "", "category": "Shop, Food", "email": "a@b.c",
+                         "website": "", "address": "Main St"}
+        }))
+        .into_response(),
+        "down@s.whatsapp.net" => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(json!({"success": false, "message": "not connected"})),
+        )
+            .into_response(),
+        _ => (
+            StatusCode::NOT_FOUND,
+            axum::Json(json!({"success": false, "message": "unknown user"})),
+        )
+            .into_response(),
+    }
+}
+
+async fn group(axum::extract::Query(q): axum::extract::Query<JidQ>) -> Response {
+    if !q.jid.ends_with("@g.us") {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({"success": false, "message": "not a group"})),
+        )
+            .into_response();
+    }
+    axum::Json(json!({
+        "jid": q.jid, "name": "Club", "topic": "", "created_at": "2026-09-28T05:40:20Z",
+        "creator": "9190@s.whatsapp.net", "is_parent": true, "linked_parent_jid": null,
+        "announce": true, "locked": false,
+        "participants": [{"jid": "2235@lid", "phone_jid": "9190@s.whatsapp.net", "lid": "2235@lid",
+                          "is_admin": true, "is_super_admin": true, "display_name": null}],
+        "sub_groups": [{"jid": "1@g.us", "name": "A"}]
+    }))
+    .into_response()
+}
+
+async fn newsletter(axum::extract::Query(q): axum::extract::Query<JidQ>) -> Response {
+    axum::Json(
+        json!({"jid": q.jid, "name": "TFI", "description": "d", "subscribers": 23101,
+                      "verified": false, "picture_id": null}),
+    )
+    .into_response()
+}
+
+async fn avatar(axum::extract::Query(q): axum::extract::Query<JidQ>) -> Response {
+    match q.jid.as_str() {
+        "none@g.us" => (
+            StatusCode::NOT_FOUND,
+            axum::Json(json!({"success": false, "message": "no picture"})),
+        )
+            .into_response(),
+        "slow@g.us" => {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            StatusCode::OK.into_response()
+        }
+        j => axum::Json(json!({
+            "path": format!("/store/avatars/{j}{}.jpg", if q.full.as_deref() == Some("1") {"-full"} else {""}),
+            "picture_id": "9", "cached": true
+        }))
+        .into_response(),
+    }
+}
+
+async fn refresh() -> Response {
+    axum::Json(
+        json!({"success": true, "groups": 162, "communities": 21, "channels": 2,
+                      "renamed": 4, "cached": false}),
+    )
+    .into_response()
+}
+
 async fn health() -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
@@ -148,6 +230,11 @@ impl Harness {
             .route("/api/react", post(ok_json))
             .route("/api/mark-read", post(ok_json))
             .route("/api/health", get(health))
+            .route("/api/profile", get(profile))
+            .route("/api/group", get(group))
+            .route("/api/newsletter", get(newsletter))
+            .route("/api/avatar", get(avatar))
+            .route("/api/chats/refresh", post(refresh))
             .layer(middleware::from_fn_with_state(mock.clone(), guard))
             .with_state(mock.clone());
         tokio::spawn(async move {
@@ -453,4 +540,93 @@ fn rejects_non_loopback_paths_config() {
     );
     p.bridge_url = "http://127.0.0.1:8080".into();
     assert!(BridgeClient::new(&p).is_ok());
+}
+
+#[tokio::test]
+async fn profile_group_newsletter_parse() {
+    let h = Harness::start().await;
+    let c = h.client();
+    let p = c.profile("919811111111@s.whatsapp.net").await.unwrap();
+    assert_eq!(p.push_name.as_deref(), Some("Ally"));
+    assert_eq!(p.verified_name, None);
+    let b = p.business.unwrap();
+    assert_eq!(b.category.as_deref(), Some("Shop, Food"));
+    assert_eq!(
+        c.profile("x@s.whatsapp.net").await.unwrap_err().kind,
+        ErrorKind::NotFound
+    );
+    assert_eq!(
+        c.profile("down@s.whatsapp.net").await.unwrap_err().kind,
+        ErrorKind::BridgeDown
+    );
+    assert_eq!(
+        c.profile("nojid").await.unwrap_err().kind,
+        ErrorKind::Invalid
+    );
+    let g = c.group("120@g.us").await.unwrap();
+    assert!(g.is_parent && g.announce && !g.locked);
+    assert_eq!(
+        g.participants[0].phone_jid.as_deref(),
+        Some("9190@s.whatsapp.net")
+    );
+    assert_eq!(g.participants[0].display_name, None);
+    assert_eq!(g.sub_groups.len(), 1);
+    assert_eq!(g.created_at.as_deref(), Some("2026-09-28T05:40:20Z"));
+    assert_eq!(
+        c.group("1@newsletter").await.unwrap_err().kind,
+        ErrorKind::External
+    );
+    let n = c.newsletter("5@newsletter").await.unwrap();
+    assert_eq!((n.subscribers, n.picture_id), (Some(23101), None));
+}
+
+#[tokio::test]
+async fn avatar_and_refresh() {
+    let h = Harness::start().await;
+    let c = h.client();
+    let a = c.avatar("7@g.us", false).await.unwrap();
+    assert_eq!(
+        a.path,
+        std::path::PathBuf::from("/store/avatars/7@g.us.jpg")
+    );
+    assert_eq!(a.picture_id.as_deref(), Some("9"));
+    let a = c.avatar("7@g.us", true).await.unwrap();
+    assert!(a.path.to_string_lossy().ends_with("-full.jpg"));
+    assert_eq!(
+        c.avatar("none@g.us", false).await.unwrap_err().kind,
+        ErrorKind::NotFound
+    );
+    let r = c.refresh_chats().await.unwrap();
+    assert_eq!(
+        (r.groups, r.communities, r.channels, r.renamed),
+        (162, 21, 2, 4)
+    );
+    assert!(!r.cached);
+}
+
+#[tokio::test]
+async fn missing_endpoints_are_not_found() {
+    // An old bridge without the new routes answers 404 → NotFound (callers fall back).
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(listener, Router::new()).await.unwrap();
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let tf = dir.path().join(".bridge-token");
+    std::fs::write(&tf, TOKEN_A).unwrap();
+    let c = BridgeClient::with_timeouts(
+        &format!("http://127.0.0.1:{port}"),
+        &tf,
+        Timeouts::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        c.refresh_chats().await.unwrap_err().kind,
+        ErrorKind::NotFound
+    );
+    assert_eq!(
+        c.avatar("1@g.us", false).await.unwrap_err().kind,
+        ErrorKind::NotFound
+    );
 }

@@ -11,7 +11,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use wa_core::config::Paths;
 use wa_core::time::now_epoch;
-use wa_core::traits::{BridgeApi, BridgeSend, DownloadOutcome};
+use wa_core::traits::{
+    BridgeApi, BridgeAvatar, BridgeGroup, BridgeNewsletter, BridgeProfile, BridgeSend,
+    DownloadOutcome, RefreshStats,
+};
 use wa_core::types::{BridgeState, ConnectionState};
 use wa_core::{AppError, ErrorKind, Result};
 
@@ -145,6 +148,27 @@ impl BridgeClient {
             return interpret(status, &text, &token);
         }
     }
+}
+
+/// Timeout for metadata reads (profile, group, newsletter, avatar, refresh).
+pub const META_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// `?jid=<percent-encoded>` query string.
+fn jid_query(path: &str, jid: &str) -> Result<String> {
+    let jid = jid.trim();
+    if jid.is_empty() || !jid.contains('@') {
+        return Err(AppError::invalid("a full JID (user@server) is required"));
+    }
+    let enc: String = url::form_urlencoded::byte_serialize(jid.as_bytes()).collect();
+    Ok(format!("{path}?jid={enc}"))
+}
+
+/// Decode a JSON body into a typed struct (lenient: unknown fields ignored).
+fn decode<T: serde::de::DeserializeOwned>(v: Value, what: &str) -> Result<T> {
+    serde_json::from_value(v).map_err(|e| {
+        AppError::external(format!("Unexpected {what} response from the bridge"))
+            .with_detail(e.to_string())
+    })
 }
 
 /// Validate the base URL is loopback and normalise it to `scheme://host:port`.
@@ -473,11 +497,103 @@ impl BridgeApi for BridgeClient {
         .await
         .map(|_| ())
     }
+
+    async fn profile(&self, jid: &str) -> Result<BridgeProfile> {
+        self.profile_impl(jid).await
+    }
+
+    async fn group(&self, jid: &str) -> Result<BridgeGroup> {
+        self.group_impl(jid).await
+    }
+
+    async fn newsletter(&self, jid: &str) -> Result<BridgeNewsletter> {
+        self.newsletter_impl(jid).await
+    }
+
+    async fn avatar(&self, jid: &str, full: bool) -> Result<BridgeAvatar> {
+        self.avatar_impl(jid, full).await
+    }
+
+    async fn refresh_chats(&self) -> Result<RefreshStats> {
+        self.refresh_impl().await
+    }
+}
+
+impl BridgeClient {
+    async fn get_meta<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        jid: &str,
+        what: &str,
+    ) -> Result<T> {
+        let v = self
+            .request(Method::GET, &jid_query(path, jid)?, None, META_TIMEOUT)
+            .await?;
+        decode(v, what)
+    }
+
+    async fn profile_impl(&self, jid: &str) -> Result<BridgeProfile> {
+        self.get_meta("/api/profile", jid, "profile").await
+    }
+
+    async fn group_impl(&self, jid: &str) -> Result<BridgeGroup> {
+        self.get_meta("/api/group", jid, "group").await
+    }
+
+    async fn newsletter_impl(&self, jid: &str) -> Result<BridgeNewsletter> {
+        self.get_meta("/api/newsletter", jid, "channel").await
+    }
+
+    async fn avatar_impl(&self, jid: &str, full: bool) -> Result<BridgeAvatar> {
+        let path = format!(
+            "{}&full={}",
+            jid_query("/api/avatar", jid)?,
+            if full { 1 } else { 0 }
+        );
+        let v = self.request(Method::GET, &path, None, META_TIMEOUT).await?;
+        let p = v.get("path").and_then(Value::as_str).unwrap_or_default();
+        if p.is_empty() {
+            return Err(AppError::not_found("no picture"));
+        }
+        Ok(BridgeAvatar {
+            path: PathBuf::from(p),
+            picture_id: v
+                .get("picture_id")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        })
+    }
+
+    async fn refresh_impl(&self) -> Result<RefreshStats> {
+        let v = self
+            .request(
+                Method::POST,
+                "/api/chats/refresh",
+                None,
+                self.timeouts.default,
+            )
+            .await?;
+        decode(v, "refresh")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jid_queries_are_encoded() {
+        assert_eq!(
+            jid_query("/api/profile", " 9198@s.whatsapp.net ").unwrap(),
+            "/api/profile?jid=9198%40s.whatsapp.net"
+        );
+        assert_eq!(
+            jid_query("/api/group", "a&b=c@g.us").unwrap(),
+            "/api/group?jid=a%26b%3Dc%40g.us"
+        );
+        assert!(jid_query("/api/profile", "").is_err());
+        assert!(jid_query("/api/profile", "9198").is_err());
+    }
 
     #[test]
     fn accepts_only_loopback() {
