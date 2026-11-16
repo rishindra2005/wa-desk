@@ -59,6 +59,6 @@ These are the differences from the text above. Clients should code against these
 - Bad or missing `jid` returns 400 as JSON `{success:false,message}`. Wrong methods return 405 as plain text.
 
 ## Calls (wa-desk additions, v3)
-- `POST /api/call/reject` `{call_id, caller_jid}` → `{success, message}`: `RejectCall(callerJID, callID)`. 409 if the call is not in progress in `calls`. 503 when disconnected.
-- **1:1 call media type:** in `CallOffer`, inspect the offer node (`evt.Data`) for a `video` child (and/or attributes under `<offer>`). Store `call_type='video'` when present, otherwise `voice`. Keep group `CallOfferNotice.Media`.
+- `POST /api/call/reject` `{call_id, caller_jid}` → `{success, message}`: `RejectCall(ctx, callerJID, callID)` (caller JID normalized to non-AD; `@s.whatsapp.net` or `@lid`). The row is matched by `call_id` + `result='in_progress'` + (`from_jid` or `chat_jid` = caller). Status codes: 400 bad JSON / missing or non-user `caller_jid`; 409 no ringing row (unknown, already answered/rejected/ended); 503 disconnected; 502 whatsmeow error (row untouched). On success the row becomes `result='rejected'`, `ended_at=now`, `duration_sec=0`; the later `CallTerminate` keeps `rejected`. (`whatsapp-bridge/calls_local.go`)
+- **1:1 call media type:** in `CallOffer`, the offer node (`evt.Data`) is searched recursively; a `<video>` element at any depth, or a `media`/`type`/`call-type` attribute equal to `video` on any node, gives `call_type='video'`, otherwise `voice`. Keep group `CallOfferNotice.Media`.
 - Calls stay in the existing `calls` table. wa-desk polls it through its watcher, so no webhook is needed.
