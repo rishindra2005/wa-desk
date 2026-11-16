@@ -662,7 +662,7 @@ function baseChat(
   created: number,
 ): Omit<MockChat, "jid" | "name" | "is_group" | "unread" | "messages"> {
   const dad = entry.c?.name === "Dad";
-  const hasAvatar = type === "channel" || type === "community" ? true : dad ? false : hashString(jid) % 4 !== 0;
+  const hasAvatar = type === "channel" || type === "community" || entry.c?.name === "Ananya Rao" ? true : dad ? false : hashString(jid) % 4 !== 0;
   const sz = entry.size ?? (entry.name ? NAME_SIZES[entry.name] : undefined);
   if (sz) SIZES.set(jid, sz);
   return {
@@ -729,6 +729,14 @@ function finishChats(chats: MockChat[], now: number): void {
       if (p) {
         p.is_admin = true;
         p.is_super_admin = k === 1;
+      }
+    }
+    if (c.announce) {
+      // Announcement groups: the account owner is a plain member, so posting is refused.
+      const me = out[0];
+      if (me) {
+        me.is_admin = false;
+        me.is_super_admin = false;
       }
     }
     c.participants = out;

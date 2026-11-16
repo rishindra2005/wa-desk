@@ -8,6 +8,9 @@ async function boot() {
     const { installMock } = await import("./lib/mock/install");
     const params = new URLSearchParams(location.search);
     installMock({ quiet: params.has("quiet"), speed: params.has("fast") ? 4 : 1 });
+    // Test hook (mock mode only): lets e2e drive navigation such as jumps to old messages.
+    const { app } = await import("./lib/state/app.svelte");
+    (window as unknown as { __waApp?: typeof app }).__waApp = app;
   }
   // Apply the last theme before first paint to avoid a flash.
   try {

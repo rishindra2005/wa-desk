@@ -89,7 +89,10 @@
           {@const on = selected.includes(c.jid)}
           <li>
             <label class="flex cursor-pointer items-center gap-2.5 px-2.5 py-1.5 hover:bg-surface-2 {on ? 'bg-accent-soft' : ''}" data-testid="forward-target">
-              <input type="checkbox" checked={on} onchange={() => toggle(c.jid)} aria-label={chatLabel(c)} />
+              <input type="checkbox" checked={on} onchange={(e) => {
+                toggle(c.jid);
+                e.currentTarget.checked = selected.includes(c.jid); // refuse the 6th target visually too
+              }} aria-label={chatLabel(c)} />
               <Avatar name={chatLabel(c)} id={c.jid} url={c.avatar_url} type={c.chat_type} size={30} />
               <span class="min-w-0 flex-1 truncate text-[13px]">{chatLabel(c)}</span>
             </label>

@@ -293,6 +293,7 @@ test.describe("shell", () => {
 
     await page.keyboard.press("Control+k");
     await page.getByTestId("palette-input").fill("thumbnails");
+    await expect(page.getByTestId("palette-item").first()).toContainText(/thumbnail/i);
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("toast").filter({ hasText: "Started" })).toBeVisible();
     await expect(page.getByTestId("nav-badge-system")).toBeVisible();
