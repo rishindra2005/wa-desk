@@ -8,12 +8,14 @@ import type { Settings } from "../bindings/Settings";
 import type { Theme } from "../bindings/Theme";
 import type { ViewId } from "../errors";
 import { toasts } from "./toasts.svelte";
+import { calls } from "./calls.svelte";
 import { debounce } from "../utils/misc";
 import { notify } from "../platform";
 import { resetAvatarCache } from "../avatar";
 
 export const VIEWS: { id: ViewId; label: string }[] = [
   { id: "chats", label: "Chats" },
+  { id: "calls", label: "Calls" },
   { id: "search", label: "Search" },
   { id: "media", label: "Media" },
   { id: "docs", label: "Docs" },
@@ -252,12 +254,14 @@ class AppState {
     void this.refreshIssues();
     void this.refreshUnread();
     void this.refreshJobs();
+    calls.start();
   }
 
   stop(): void {
     for (const d of this.disposers) d();
     this.disposers = [];
     this.started = false;
+    calls.stop();
   }
 }
 

@@ -200,4 +200,55 @@ describe("commands", () => {
     await vi.waitFor(() => expect(states).toContain("connected"), { timeout: 2000 });
     expect(states).toContain("pairing");
   });
+
+  it("seeds a realistic call log", async () => {
+    expect(b.calls.length).toBeGreaterThanOrEqual(38);
+    expect(b.calls.length).toBeLessThanOrEqual(45);
+    const has = (f: (c: (typeof b.calls)[number]) => boolean) => b.calls.some(f);
+    expect(has((c) => c.result === "missed" && !c.is_from_me)).toBe(true);
+    expect(has((c) => c.result === "rejected")).toBe(true);
+    expect(has((c) => c.result === "answered" || c.result === "ended")).toBe(true);
+    expect(has((c) => c.media === "video")).toBe(true);
+    expect(has((c) => c.is_group && (c.duration_secs ?? 0) > 0)).toBe(true);
+    expect(has((c) => c.is_from_me)).toBe(true);
+    expect(has((c) => c.result === "in_progress")).toBe(false);
+  });
+
+  it("filters, pages and orders calls", async () => {
+    const all = await api.listCalls({ chat_jid: null, missed_only: false, media: null, cursor: null, limit: 500 });
+    expect(all.items.length).toBe(b.calls.length);
+    expect(all.items.every((c, i) => i === 0 || (all.items[i - 1]?.ts ?? 0) >= c.ts)).toBe(true);
+    const missed = await api.listCalls({ chat_jid: null, missed_only: true, media: null, cursor: null, limit: 500 });
+    expect(missed.items.length).toBeGreaterThan(0);
+    expect(missed.items.every((c) => !c.is_from_me && (c.result === "missed" || c.result === "rejected"))).toBe(true);
+    const video = await api.listCalls({ chat_jid: null, missed_only: false, media: "video", cursor: null, limit: 500 });
+    expect(video.items.every((c) => c.media === "video")).toBe(true);
+    const p1 = await api.listCalls({ chat_jid: null, missed_only: false, media: null, cursor: null, limit: 10 });
+    const p2 = await api.listCalls({ chat_jid: null, missed_only: false, media: null, cursor: p1.next_cursor, limit: 10 });
+    expect(p1.items.length).toBe(10);
+    expect(p2.items[0]?.call_id).not.toBe(p1.items[0]?.call_id);
+    const jid = b.calls[0]!.chat_jid;
+    const one = await api.listCalls({ chat_jid: jid, missed_only: false, media: null, cursor: null, limit: 500 });
+    expect(one.items.every((c) => c.chat_jid === jid)).toBe(true);
+  });
+
+  it("ringing calls emit updates and can be declined once", async () => {
+    const seen: string[] = [];
+    await api.onCallUpdate((c) => seen.push(`${c.call_id}:${c.result}`));
+    const call = b.ring();
+    expect(call.result).toBe("in_progress");
+    await vi.waitFor(() => expect(seen).toContain(`${call.call_id}:in_progress`));
+    await api.rejectCall(call.call_id, call.caller_jid);
+    await vi.waitFor(() => expect(seen).toContain(`${call.call_id}:rejected`));
+    expect(b.rejected).toEqual([{ callId: call.call_id, callerJid: call.caller_jid }]);
+    await expect(api.rejectCall(call.call_id, call.caller_jid)).rejects.toMatchObject({ kind: "invalid" });
+    b.readOnly = true;
+    const again = b.ring();
+    await expect(api.rejectCall(again.call_id, again.caller_jid)).rejects.toMatchObject({ kind: "forbidden" });
+  });
+
+  it("an unanswered ringing call becomes missed", async () => {
+    const call = b.ring();
+    await vi.waitFor(() => expect(b.calls.find((c) => c.call_id === call.call_id)?.result).toBe("missed"), { timeout: 2000 });
+  });
 });

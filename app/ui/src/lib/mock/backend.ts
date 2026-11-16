@@ -4,6 +4,10 @@
 
 import type { AppError } from "../bindings/AppError";
 import type { AutomationEvent } from "../bindings/AutomationEvent";
+import type { CallMedia } from "../bindings/CallMedia";
+import type { CallQuery } from "../bindings/CallQuery";
+import type { CallRecord } from "../bindings/CallRecord";
+import type { CallResult } from "../bindings/CallResult";
 import type { ChatQuery } from "../bindings/ChatQuery";
 import type { ChatSummary } from "../bindings/ChatSummary";
 import type { ConnectionState } from "../bindings/ConnectionState";
@@ -42,6 +46,7 @@ import { setAvatarResolver } from "../avatar";
 import { formatPhone } from "../utils/format";
 import { hashString } from "../utils/misc";
 import { aboutFor, businessFor, buildMedia, CONTACTS, generateSeed, mediaEmoji, phoneJid, randomLogLine, type MockChat, type Seed } from "./seed";
+import { generateCalls, ringingCall } from "./calls";
 import { evaluateRule, hasErrors, validateRule } from "../utils/rules";
 import { indexToByteOffset, extOf, baseName, docBucket } from "../utils/text";
 import { mulberry32 } from "../utils/misc";
@@ -84,6 +89,12 @@ export class MockBackend {
   settings: Settings;
   conn: ConnectionState;
   indexed = 0;
+  /** The call log (oldest first internally; listed newest first). */
+  calls: CallRecord[] = [];
+  /** When true `reject_call` fails like read-only mode (for tests). */
+  readOnly = false;
+  /** Calls declined through `reject_call`, for assertions in tests. */
+  readonly rejected: { callId: string; callerJid: string }[] = [];
   /** Calls to opener/dialog/notification plugins, for assertions in tests. */
   readonly pluginCalls: { cmd: string; args: unknown }[] = [];
   private emitFn: Emit = () => {};
@@ -104,6 +115,7 @@ export class MockBackend {
     };
     this.seed = generateSeed(this.opts.now);
     this.chats = this.seed.chats;
+    this.calls = generateCalls(this.opts.now, this.chats).map((c) => ({ ...c, avatar_url: this.avatarFor(c.chat_jid) }));
     this.rules = this.seed.rules;
     this.autoLog = this.seed.automationLog;
     this.logs = this.seed.logs;
@@ -135,6 +147,9 @@ export class MockBackend {
     });
     this.every(2000, () => this.addLog(randomLogLine(this.rnd, this.nowSec())));
     if (!this.opts.quiet) {
+      // A simulated incoming call: rings, then is missed unless declined.
+      this.later(12_000, () => this.ring());
+      this.every(90_000, () => this.ring());
       this.every(45_000, () => {
         const chat = this.chats[Math.floor(this.rnd() * 8)];
         if (chat) this.incoming(chat.jid, this.pickIncomingText());
@@ -188,6 +203,11 @@ export class MockBackend {
       case "overview": return this.overview();
       case "list_chats": return this.listChats((a as { query: ChatQuery }).query);
       case "get_chat": return this.summary(this.chat((a as { jid: string }).jid));
+      case "list_calls": return this.listCalls((a as { query: CallQuery }).query);
+      case "reject_call": {
+        const { callId, callerJid } = a as { callId: string; callerJid: string };
+        return this.rejectCall(callId, callerJid);
+      }
       case "get_messages": return this.getMessages((a as { query: MessagesQuery }).query);
       case "get_message_context": {
         const { chatJid, messageId, radius } = a as { chatJid: string; messageId: string; radius: number };
@@ -351,6 +371,51 @@ export class MockBackend {
       .map((c) => this.summary(c));
     list = list.sort((a, b) => (b.last_message_ts ?? 0) - (a.last_message_ts ?? 0));
     return paginate(list, q.cursor, clampLimit(q.limit, 100));
+  }
+
+  listCalls(q: CallQuery): Page<CallRecord> {
+    const list = this.calls
+      .filter((c) => !q.chat_jid || c.chat_jid === q.chat_jid)
+      .filter((c) => !q.missed_only || (!c.is_from_me && (c.result === "missed" || c.result === "rejected")))
+      .filter((c) => !q.media || c.media === q.media)
+      .sort((a, b) => b.ts - a.ts || (a.call_id < b.call_id ? 1 : -1));
+    return paginate(list, q.cursor, clampLimit(q.limit, 100));
+  }
+
+  /** Start an incoming call that rings (exposed for e2e via window.__waMock). */
+  ring(opts: { chatJid?: string; media?: CallMedia } = {}): CallRecord {
+    const chat = opts.chatJid
+      ? this.chat(opts.chatJid)
+      : (this.chats.filter((c) => c.chat_type === "direct")[Math.floor(this.rnd() * 6)] as MockChat);
+    const media: CallMedia = opts.media ?? (this.rnd() < 0.35 ? "video" : "voice");
+    const call = { ...ringingCall(chat, this.nextId++, this.nowSec(), media), avatar_url: this.avatarFor(chat.jid) };
+    this.calls.push(call);
+    this.emit("call:update", call);
+    // Nobody picks up: it becomes a missed call.
+    this.later(25_000, () => this.finishCall(call.call_id, "missed"));
+    return call;
+  }
+
+  /** Move a call out of `in_progress` and announce it. No-op when it already finished. */
+  finishCall(callId: string, result: CallResult, duration = 0): CallRecord | null {
+    const c = this.calls.find((x) => x.call_id === callId);
+    if (!c || c.result !== "in_progress") return null;
+    c.result = result;
+    c.duration_secs = duration;
+    c.ended_at = this.nowSec();
+    c.reason = result === "missed" ? "timeout" : result === "rejected" ? "declined" : null;
+    this.emit("call:update", c);
+    return c;
+  }
+
+  private rejectCall(callId: string, callerJid: string): null {
+    if (this.readOnly) fail("forbidden", "wa-desk is running in read-only mode");
+    const c = this.calls.find((x) => x.call_id === callId);
+    if (!c || c.result !== "in_progress" || c.is_from_me) fail("invalid", "That call is no longer ringing");
+    if (!callerJid.includes("@")) fail("invalid", "A full caller JID is required");
+    this.rejected.push({ callId, callerJid });
+    this.finishCall(callId, "rejected");
+    return null;
   }
 
   getMessages(q: MessagesQuery): Page<Message> {

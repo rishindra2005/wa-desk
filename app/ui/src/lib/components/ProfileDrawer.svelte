@@ -2,9 +2,10 @@
 <script lang="ts">
   import {
     X, ArrowLeft, Copy, Search, FileDown, MessageSquare, BadgeCheck, Lock, Megaphone, Users, Link as LinkIcon,
-    Star, FileText, Images, Mail, Globe, MapPin, Briefcase, ChevronRight, Network,
+    Star, FileText, Images, Mail, Globe, MapPin, Briefcase, ChevronRight, Network, Phone, PhoneIncoming, PhoneMissed, PhoneOff, PhoneOutgoing, Video,
   } from "@lucide/svelte";
   import * as api from "../api";
+  import type { CallRecord } from "../bindings/CallRecord";
   import type { ChatStats } from "../bindings/ChatStats";
   import type { ChatSummary } from "../bindings/ChatSummary";
   import type { LinkItem } from "../bindings/LinkItem";
@@ -22,8 +23,9 @@
   import { toasts } from "../state/toasts.svelte";
   import { chatLabel, dateTime, displayName, formatCount, formatPhone, formatSize, shortDate } from "../utils/format";
   import { copyText } from "../utils/misc";
+  import { CALL_FROM_PHONE_HINT, callDetail, callTitle, direction } from "../utils/calls";
 
-  type Tab = "media" | "docs" | "links" | "starred";
+  type Tab = "media" | "docs" | "links" | "starred" | "calls";
   const PAGE = 60;
 
   let profile = $state<Profile | null>(null);
@@ -40,7 +42,8 @@
   let docs = $state<MediaItem[]>([]);
   let links = $state<LinkItem[]>([]);
   let starred = $state<SearchHit[]>([]);
-  let cursors = $state<Record<Tab, string | null>>({ media: null, docs: null, links: null, starred: null });
+  let callList = $state<CallRecord[]>([]);
+  let cursors = $state<Record<Tab, string | null>>({ media: null, docs: null, links: null, starred: null, calls: null });
   let tabLoading = $state(false);
 
   const jid = $derived(app.profileJid);
@@ -56,7 +59,8 @@
     media = docs = [];
     links = [];
     starred = [];
-    cursors = { media: null, docs: null, links: null, starred: null };
+    callList = [];
+    cursors = { media: null, docs: null, links: null, starred: null, calls: null };
     void api.chatStats(j).then((s) => my === seq && (stats = s), () => {});
     api.getChat(j).then((c) => my === seq && (fallback = c), () => {});
     try {
@@ -93,6 +97,11 @@
         if (t === "media") media = reset ? p.items : [...media, ...p.items];
         else docs = reset ? p.items : [...docs, ...p.items];
         cursors[t] = p.next_cursor;
+      } else if (t === "calls") {
+        const p = await api.listCalls({ chat_jid: j, missed_only: false, media: null, cursor, limit: PAGE });
+        if (my !== seq) return;
+        callList = reset ? p.items : [...callList, ...p.items];
+        cursors[t] = p.next_cursor;
       } else if (t === "links") {
         const p = await api.listLinks(j, cursor, PAGE);
         if (my !== seq) return;
@@ -112,7 +121,7 @@
   }
 
   function listFor(t: Tab): unknown[] {
-    return t === "media" ? media : t === "docs" ? docs : t === "links" ? links : starred;
+    return t === "media" ? media : t === "docs" ? docs : t === "links" ? links : t === "calls" ? callList : starred;
   }
 
   function pickTab(t: Tab) {
@@ -275,7 +284,7 @@
 
       <section class="border-t border-border px-3 py-2" aria-label="Chat content">
         <div class="tabbar w-full" role="tablist" aria-label="Shared content">
-          {#each [["media", "Media", stats?.media], ["docs", "Docs", stats?.docs], ["links", "Links", stats?.links], ["starred", "Starred", stats?.starred]] as const as [id, label, n] (id)}
+          {#each [["media", "Media", stats?.media], ["docs", "Docs", stats?.docs], ["links", "Links", stats?.links], ["starred", "Starred", stats?.starred], ["calls", "Calls", undefined]] as const as [id, label, n] (id)}
             <button class="flex-1" role="tab" aria-selected={tab === id} onclick={() => pickTab(id)} data-testid="ptab-{id}">
               {label}{#if n !== undefined} <span class="text-faint" data-testid="count-{id}">{n}</span>{/if}
             </button>
@@ -325,6 +334,25 @@
                 </li>
               {/each}
             </ul>
+          {:else if tab === "calls"}
+            {#if callList.length === 0 && !tabLoading}<p class="py-4 text-center text-xs text-faint" data-testid="pcalls-empty">No calls</p>{/if}
+            <ul>
+              {#each callList as c (c.call_id + c.chat_jid)}
+                {@const dir = direction(c)}
+                {@const bad = dir === "missed" || dir === "declined"}
+                <li class="flex items-center gap-2.5 rounded-md p-1.5" data-testid="pcall" data-result={c.result}>
+                  <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-2 {bad ? 'text-danger' : 'text-accent-text'}">
+                    {#if dir === "missed"}<PhoneMissed size={15} />{:else if dir === "declined"}<PhoneOff size={15} />{:else if dir === "outgoing"}<PhoneOutgoing size={15} />{:else}<PhoneIncoming size={15} />{/if}
+                  </span>
+                  <span class="min-w-0 flex-1">
+                    <span class="block truncate text-[13px] font-medium {bad ? 'text-danger' : ''}">{callTitle(c)}</span>
+                    <span class="block truncate text-[11.5px] text-muted">{callDetail(c)} · {dateTime(c.ts)}</span>
+                  </span>
+                  {#if c.media === "video"}<Video size={14} class="shrink-0 text-faint" />{:else}<Phone size={14} class="shrink-0 text-faint" />{/if}
+                </li>
+              {/each}
+            </ul>
+            <p class="mt-2 px-1.5 text-center text-[11px] text-faint" title={CALL_FROM_PHONE_HINT}>{CALL_FROM_PHONE_HINT}</p>
           {:else}
             {#if starred.length === 0 && !tabLoading}<p class="py-4 text-center text-xs text-faint">No starred messages</p>{/if}
             <ul>

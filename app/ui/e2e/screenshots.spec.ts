@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 
 // Captures each main view in light and dark for visual review (app/ui/screenshots/).
 
-const VIEWS = ["chats", "search", "media", "docs", "tools", "automations", "system", "settings"] as const;
+const VIEWS = ["chats", "calls", "search", "media", "docs", "tools", "automations", "system", "settings"] as const;
 
 async function prepare(page: Page, view: (typeof VIEWS)[number]) {
   await page.getByTestId(`nav-${view}`).click();
@@ -11,6 +11,9 @@ async function prepare(page: Page, view: (typeof VIEWS)[number]) {
     case "chats":
       await page.getByTestId("chat-row").nth(2).click();
       await expect(page.getByTestId("message").first()).toBeVisible();
+      break;
+    case "calls":
+      await expect(page.getByTestId("call-row").first()).toBeVisible();
       break;
     case "search":
       await page.getByTestId("search-input").fill("birthday");
@@ -51,6 +54,17 @@ for (const scheme of ["light", "dark"] as const) {
       await prepare(page, v);
       await page.screenshot({ path: `screenshots/${v}-${scheme}.png` });
     }
+
+    // Ringing call banner over the chats view.
+    await page.getByTestId("nav-chats").click();
+    await page.evaluate(() => {
+      const m = (window as unknown as { __waMock: { ring: (o: object) => unknown; chats: { name: string; jid: string }[] } }).__waMock;
+      m.ring({ chatJid: m.chats.find((x) => x.name === "Ananya Rao")?.jid, media: "video" });
+    });
+    await expect(page.getByTestId("call-banner")).toBeVisible();
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: `screenshots/call-banner-${scheme}.png` });
+    await page.getByTestId("dismiss-call").click();
 
     // Profile drawer: contact, then group.
     await page.getByTestId("nav-chats").click();

@@ -2,11 +2,12 @@
   import { tick, untrack } from "svelte";
   import {
     ArrowDown, MessageSquareDashed, MoreVertical, X, Copy, Forward, Star, FileDown, Download, Info, Search, ListChecks,
-    Reply, SmilePlus, ExternalLink, Save, Wand2, CornerUpLeft, RefreshCw, StarOff,
+    Reply, SmilePlus, ExternalLink, Save, Wand2, CornerUpLeft, RefreshCw, StarOff, Phone, Video,
   } from "@lucide/svelte";
   import * as api from "../../api";
   import type { ChatSummary } from "../../bindings/ChatSummary";
   import type { Message } from "../../bindings/Message";
+  import type { CallRecord } from "../../bindings/CallRecord";
   import type { MediaRef } from "../../bindings/MediaRef";
   import type { SendReq } from "../../bindings/SendReq";
   import Avatar from "../../components/Avatar.svelte";
@@ -32,6 +33,7 @@
   import { applyClick, inOrder } from "../../utils/selection";
   import type { MenuItem } from "../../utils/menu";
   import { baseName } from "../../utils/text";
+  import { CALL_FROM_PHONE_HINT, direction, pillText, upsertCall } from "../../utils/calls";
   import { downloadMedia, openExternal, saveMedia } from "../../media";
   import { pickFolder } from "../../platform";
 
@@ -49,6 +51,7 @@
   type Row =
     | { kind: "day"; key: string; label: string }
     | { kind: "unread"; key: string; label: string }
+    | { kind: "call"; key: string; c: CallRecord }
     | { kind: "msg"; key: string; m: Message; first: boolean; showName: boolean; local: boolean };
 
   interface Pending {
@@ -62,6 +65,8 @@
   }
 
   let messages = $state<Message[]>([]);
+  /** The chat's call log, merged into the thread by time. */
+  let callRecs = $state<CallRecord[]>([]);
   let olderCursor = $state<string | null>(null);
   /** Set while showing a context window: cursor to page toward the newest message. */
   let newerCursor = $state<string | null>(null);
@@ -111,17 +116,44 @@
   const pendingById = $derived(new Map(pending.map((p) => [p.id, p])));
   const orderedIds = $derived(messages.map((m) => m.id));
 
+  /** Calls inside the loaded time window (older calls wait for older messages to load). */
+  const visibleCalls = $derived.by(() => {
+    if (!callRecs.length) return [];
+    const first = messages[0]?.ts;
+    const last = messages[messages.length - 1]?.ts;
+    const lo = olderCursor !== null && first !== undefined ? first : -Infinity;
+    const hi = detached && last !== undefined ? last : Infinity;
+    return callRecs.filter((c) => c.ts >= lo && c.ts <= hi).sort((a, b) => a.ts - b.ts || (a.call_id < b.call_id ? -1 : 1));
+  });
+
   const rows = $derived.by(() => {
     const out: Row[] = [];
     let prev: Message | null = null;
+    let lastDay = "";
     const now = Date.now();
     let unreadShown = false;
     let idx = -1;
+    const cl = visibleCalls;
+    let ci = 0;
+    const day = (ts: number) => {
+      const dk = dayKey(ts);
+      const isNew = dk !== lastDay;
+      if (isNew) out.push({ kind: "day", key: `d:${dk}`, label: dayLabel(ts, now) });
+      lastDay = dk;
+      return isNew;
+    };
+    const flushCalls = (until: number) => {
+      while (ci < cl.length && (cl[ci] as CallRecord).ts <= until) {
+        const c = cl[ci++] as CallRecord;
+        day(c.ts);
+        out.push({ kind: "call", key: `call:${c.call_id}:${c.chat_jid}`, c });
+        prev = null;
+      }
+    };
     for (const m of allMessages) {
       idx++;
-      const dk = dayKey(m.ts);
-      const newDay = !prev || dayKey(prev.ts) !== dk;
-      if (newDay) out.push({ kind: "day", key: `d:${dk}`, label: dayLabel(m.ts, now) });
+      flushCalls(m.ts - 1);
+      const newDay = day(m.ts);
       if (!unreadShown && unreadFromId === m.id) {
         unreadShown = true;
         const n = allMessages.slice(idx).filter((x) => !x.is_from_me).length;
@@ -132,11 +164,12 @@
       out.push({ kind: "msg", key: m.id, m, first: !sameSender, showName: !sameSender, local: pendingById.has(m.id) });
       prev = m;
     }
+    flushCalls(Infinity);
     return out;
   });
 
   function estimate(r: Row): number {
-    if (r.kind === "day" || r.kind === "unread") return 40;
+    if (r.kind === "day" || r.kind === "unread" || r.kind === "call") return 40;
     const m = r.m;
     let h = r.first ? 44 : 38;
     if (m.media) h += m.media.kind === "audio" ? 44 : m.media.kind === "document" ? 90 : m.media.kind === "sticker" ? 130 : 230;
@@ -259,6 +292,8 @@
       if (jid === currentJid) return;
       currentJid = jid;
       messages = [];
+      callRecs = [];
+      void loadCalls();
       replyTo = null;
       lightbox = null;
       unreadFromId = null;
@@ -296,6 +331,16 @@
       if (keep.length !== pending.length) pending = keep;
     });
   });
+
+  async function loadCalls() {
+    const jid = chat.jid;
+    try {
+      const page = await api.listCalls({ chat_jid: jid, missed_only: false, media: null, cursor: null, limit: 200 });
+      if (jid === chat.jid) callRecs = page.items;
+    } catch {
+      if (jid === chat.jid) callRecs = [];
+    }
+  }
 
   // Live updates.
   const refreshNew = debounce(async () => {
@@ -353,9 +398,13 @@
     const b = api.subscribe("db:changed", (p) => {
       if (p.chat_jids.includes(chat.jid)) refreshChanged();
     });
+    const c = api.subscribe("call:update", (call) => {
+      if (call.chat_jid === chat.jid) callRecs = upsertCall(callRecs, call);
+    });
     return () => {
       a();
       b();
+      c();
       refreshNew.cancel();
       refreshChanged.cancel();
     };
@@ -615,6 +664,11 @@
         </div>
       </button>
       {#if loadingOlder || loadingNewer}<Spinner size={14} label="Loading messages" />{/if}
+      {#if chat.chat_type === "direct" || chat.chat_type === "group"}
+        <!-- Linked devices have no call media: these only explain where to call from. -->
+        <button class="icon-btn opacity-60" aria-disabled="true" aria-label="Video call. {CALL_FROM_PHONE_HINT}" title={CALL_FROM_PHONE_HINT} onclick={(e) => e.preventDefault()} data-testid="header-video-call"><Video size={18} /></button>
+        <button class="icon-btn opacity-60" aria-disabled="true" aria-label="Voice call. {CALL_FROM_PHONE_HINT}" title={CALL_FROM_PHONE_HINT} onclick={(e) => e.preventDefault()} data-testid="header-voice-call"><Phone size={17} /></button>
+      {/if}
       <button bind:this={moreBtn} class="icon-btn" aria-label="Chat menu" aria-haspopup="menu" onclick={() => moreBtn && ctxMenu.openFor(moreBtn, headerItems(), "Chat menu")} data-testid="thread-menu"><MoreVertical size={18} /></button>
     </header>
   {/if}
@@ -649,6 +703,15 @@
           {#if r.kind === "day"}
             <div class="flex justify-center py-2" role="separator" aria-label={r.label}>
               <span class="rounded-md bg-surface px-2.5 py-0.5 text-[11.5px] font-medium text-muted shadow-[var(--shadow)]" data-testid="day-separator">{r.label}</span>
+            </div>
+          {:else if r.kind === "call"}
+            <div class="flex justify-center px-4 py-1.5" data-testid="call-pill-row">
+              <span
+                class="inline-flex items-center rounded-full bg-surface px-3 py-1 text-[12px] shadow-[var(--shadow)] {direction(r.c) === 'missed' || direction(r.c) === 'declined' ? 'text-danger' : 'text-muted'}"
+                data-testid="call-pill"
+                data-call-id={r.c.call_id}
+                data-result={r.c.result}
+              >{pillText(r.c)}</span>
             </div>
           {:else if r.kind === "unread"}
             <div class="flex items-center gap-3 px-4 py-2" role="separator" aria-label={r.label} data-testid="unread-divider">

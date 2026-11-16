@@ -5,6 +5,8 @@ import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AppError } from "./bindings/AppError";
 import type { AutomationEvent } from "./bindings/AutomationEvent";
+import type { CallQuery } from "./bindings/CallQuery";
+import type { CallRecord } from "./bindings/CallRecord";
 import type { ChatQuery } from "./bindings/ChatQuery";
 import type { ChatStats } from "./bindings/ChatStats";
 import type { ExportReq } from "./bindings/ExportReq";
@@ -112,6 +114,8 @@ export async function call<T>(cmd: string, args?: InvokeArgs): Promise<T> {
 export const overview = () => call<Overview>("overview");
 export const listChats = (query: ChatQuery) => call<Page<ChatSummary>>("list_chats", { query });
 export const getChat = (jid: string) => call<ChatSummary>("get_chat", { jid });
+export const listCalls = (query: CallQuery) => call<Page<CallRecord>>("list_calls", { query });
+export const rejectCall = (callId: string, callerJid: string) => call<void>("reject_call", { callId, callerJid });
 export const getMessages = (query: MessagesQuery) => call<Page<Message>>("get_messages", { query });
 export const getMessageContext = (chatJid: string, messageId: string, radius: number) =>
   call<Message[]>("get_message_context", { chatJid, messageId, radius });
@@ -165,7 +169,7 @@ export const COMMANDS = [
   "overview", "list_chats", "get_chat", "get_messages", "get_message_context", "search", "list_media",
   "ensure_media", "preview_doc", "open_media_external", "save_media_as", "open_path", "reveal_path", "get_profile",
   "chat_stats", "list_links", "set_starred", "list_starred", "export_chat", "forward_messages", "copy_messages_text",
-  "refresh_chat_names", "send_message", "react", "mark_read",
+  "refresh_chat_names", "send_message", "react", "mark_read", "list_calls", "reject_call",
   "connection_status", "reconnect", "start_job", "cancel_job", "list_jobs", "list_rules", "save_rule",
   "delete_rule", "test_rule", "automation_log", "set_automation_enabled", "query_logs", "list_issues",
   "resolve_issue", "clear_resolved_issues", "export_issue_bundle", "get_settings", "set_settings",
@@ -182,10 +186,11 @@ export interface EventMap {
   "job:finished": JobRecord;
   "automation:fired": AutomationEvent;
   "issue:new": Issue;
+  "call:update": CallRecord;
 }
 export type EventName = keyof EventMap;
 export const EVENTS: readonly EventName[] = [
-  "db:new-messages", "db:changed", "bridge:state", "job:progress", "job:finished", "automation:fired", "issue:new",
+  "db:new-messages", "db:changed", "bridge:state", "job:progress", "job:finished", "automation:fired", "issue:new", "call:update",
 ];
 
 /** Subscribe to a backend event with a typed payload. */
@@ -200,6 +205,7 @@ export const onJobProgress = (cb: (p: JobProgress) => void) => onEvent("job:prog
 export const onJobFinished = (cb: (p: JobRecord) => void) => onEvent("job:finished", cb);
 export const onAutomationFired = (cb: (p: AutomationEvent) => void) => onEvent("automation:fired", cb);
 export const onIssueNew = (cb: (p: Issue) => void) => onEvent("issue:new", cb);
+export const onCallUpdate = (cb: (p: CallRecord) => void) => onEvent("call:update", cb);
 
 /**
  * Subscribe for the lifetime of the calling component (use inside `$effect`

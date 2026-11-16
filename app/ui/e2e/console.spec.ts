@@ -9,7 +9,7 @@ test("views render without console errors or warnings", async ({ page }) => {
   });
   await page.goto("/?quiet");
   await expect(page.getByTestId("chat-row").first()).toBeVisible();
-  for (const v of ["chats", "search", "media", "docs", "tools", "automations", "system", "settings"]) {
+  for (const v of ["chats", "calls", "search", "media", "docs", "tools", "automations", "system", "settings"]) {
     await page.getByTestId(`nav-${v}`).click();
     await expect(page.getByTestId(`view-${v}`)).toBeVisible();
     await page.waitForTimeout(300);
