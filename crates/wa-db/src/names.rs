@@ -331,6 +331,7 @@ pub struct NameResolver {
     bridge: Arc<RoPool>,
     wa: Arc<RoPool>,
     cache: RwLock<Option<(Instant, Arc<NameCache>)>>,
+    loading: parking_lot::Mutex<()>,
 }
 
 impl NameResolver {
@@ -340,6 +341,7 @@ impl NameResolver {
             bridge,
             wa,
             cache: RwLock::new(None),
+            loading: parking_lot::Mutex::new(()),
         }
     }
 
@@ -349,7 +351,22 @@ impl NameResolver {
     }
 
     /// Current snapshot (loads on first use or after TTL / invalidate).
+    ///
+    /// Single-flight: only one caller reloads; while it does, others keep
+    /// using the expired snapshot (if there is one) instead of piling up
+    /// identical ~200 ms reloads.
     pub fn snapshot(&self) -> Result<Arc<NameCache>> {
+        let stale = match self.cache.read().as_ref() {
+            Some((at, c)) if at.elapsed() < TTL => return Ok(Arc::clone(c)),
+            Some((_, c)) => Some(Arc::clone(c)),
+            None => None,
+        };
+        let _loading = match (self.loading.try_lock(), stale) {
+            (Some(g), _) => g,
+            (None, Some(s)) => return Ok(s),
+            (None, None) => self.loading.lock(),
+        };
+        // Someone else may have finished loading while we waited.
         if let Some((at, c)) = self.cache.read().as_ref()
             && at.elapsed() < TTL
         {

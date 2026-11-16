@@ -159,6 +159,26 @@ async fn main() {
         .skip(5)
         .take(40)
         .collect();
+    // Name snapshot reload (every 5 min TTL, on the first command after it).
+    if let Some(r) = rows.first() {
+        let db = core.db().clone();
+        let (c, i) = (r.chat_jid.clone(), r.message_id.clone());
+        let ms = tokio::task::spawn_blocking(move || {
+            db.names().invalidate();
+            let t = Instant::now();
+            let _ = db.get_message(&c, &i);
+            let cold = t.elapsed().as_secs_f64() * 1000.0;
+            let t = Instant::now();
+            let _ = db.get_message(&c, &i);
+            (cold, t.elapsed().as_secs_f64() * 1000.0)
+        })
+        .await
+        .unwrap_or_default();
+        println!(
+            "get_message: with name reload {:.1} ms, cached names {:.2} ms",
+            ms.0, ms.1
+        );
+    }
     let core = Arc::new(core);
     for round in ["cold", "after warm"] {
         if round == "after warm" {
