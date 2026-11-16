@@ -295,7 +295,7 @@ async fn preview_office_converts_or_explains() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn open_media_external_uses_resolved_path() {
+async fn open_media_external_opens_named_copy() {
     let h = harness().await;
     h.core
         .open_media_external(DM_ALICE.into(), M_ALICE_PDF.into())
@@ -303,7 +303,10 @@ async fn open_media_external_uses_resolved_path() {
         .unwrap();
     let opened = h.platform.opened.lock().clone();
     assert_eq!(opened.len(), 1);
-    assert!(opened[0].ends_with("document_20261115_100200_A3PDF"));
+    // Opened under its original name (with extension) so the desktop picks the
+    // right app, and the content is the stored file.
+    assert!(opened[0].ends_with("A3PDF/ML-MODULE 1 Notes.pdf"), "{:?}", opened[0]);
+    assert_eq!(std::fs::read(&opened[0]).unwrap(), wa_testkit::ids::PDF_BYTES);
 }
 
 #[tokio::test(flavor = "multi_thread")]
