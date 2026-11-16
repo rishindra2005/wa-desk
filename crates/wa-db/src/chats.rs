@@ -7,13 +7,14 @@
 
 use std::collections::HashMap;
 
-use wa_core::types::{ChatKind, ChatQuery, ChatSummary, MediaKind, Page};
+use wa_core::types::{ChatKind, ChatQuery, ChatSummary, ChatType, MediaKind, Page};
 use wa_core::{AppError, Result};
 
 use crate::Core;
 use crate::bridge_ro::{PAGE_ROWS, RoConn};
-use crate::messages::sender_of;
-use crate::names::{NameCache, is_group_jid, is_status_jid};
+use crate::media::avatar_url;
+use crate::messages::{is_indexed_chat, sender_of};
+use crate::names::{NameCache, STATUS_JID, is_group_jid};
 use crate::raw::{self, RawMsg, ts_of};
 use crate::util::{clamp_limit, decode_offset_cursor, encode_offset_cursor, preview_text};
 
@@ -177,6 +178,7 @@ fn last_from_bridge(conn: &RoConn, jid: &str) -> Result<Option<LastMsg>> {
 }
 
 struct Candidate {
+    chat_type: ChatType,
     row: ChatRow,
     last: Option<LastMsg>,
     name: String,
@@ -197,18 +199,19 @@ fn candidates(
     };
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
-        if only.is_none() && is_status_jid(&row.jid) {
+        if only.is_none() && row.jid == STATUS_JID {
             continue;
         }
         let last = match &indexed {
-            Some(m) => m.get(&row.jid).copied(),
-            None => last_from_bridge(conn, &row.jid)?,
+            Some(m) if is_indexed_chat(&row.jid) => m.get(&row.jid).copied(),
+            _ => last_from_bridge(conn, &row.jid)?,
         };
         if only.is_none() && last.is_none() && row.last_message_time.is_none() {
             continue;
         }
         let sort_ts = last.map(|l| l.ts).or(row.last_message_time);
         out.push(Candidate {
+            chat_type: names.chat_type(&row.jid),
             name: names.chat_name(&row.jid),
             row,
             last,
@@ -219,11 +222,16 @@ fn candidates(
 }
 
 fn matches(c: &Candidate, q: &ChatQuery) -> bool {
-    let group = is_group_jid(&c.row.jid);
-    match q.kind {
-        ChatKind::Direct if group => return false,
-        ChatKind::Group if !group => return false,
-        _ => {}
+    let ok = match q.kind {
+        ChatKind::All => true,
+        ChatKind::Direct => c.chat_type == ChatType::Direct,
+        ChatKind::Group => c.chat_type == ChatType::Group,
+        ChatKind::Community => c.chat_type == ChatType::Community,
+        ChatKind::Channel => c.chat_type == ChatType::Channel,
+        ChatKind::Broadcast => c.chat_type == ChatType::Broadcast,
+    };
+    if !ok {
+        return false;
     }
     if q.unread_only && !unread_of(c) {
         return false;
@@ -259,6 +267,12 @@ fn summarize(
         .into_iter()
         .map(|r| (r.rowid, r))
         .collect();
+    let own: Vec<(&str, &str)> = raws
+        .values()
+        .filter(|r| r.is_from_me)
+        .map(|r| (r.chat_jid.as_str(), r.id.as_str()))
+        .collect();
+    let receipts = crate::receipts::statuses(conn, &own)?;
     let _ = core;
     Ok(cands
         .into_iter()
@@ -270,6 +284,12 @@ fn summarize(
                 .filter(|r| r.chat_jid == c.row.jid);
             ChatSummary {
                 is_group: is_group_jid(&c.row.jid),
+                chat_type: c.chat_type,
+                parent: names.parent(&c.row.jid),
+                avatar_url: avatar_url(&c.row.jid),
+                last_status: last.and_then(|r| {
+                    crate::receipts::status_of(&receipts, &r.chat_jid, &r.id, r.is_from_me)
+                }),
                 last_message_ts: c.sort_ts,
                 last_preview: last.map(preview_label),
                 last_sender_name: last.map(|r| names.sender_name(&sender_of(r), r.is_from_me)),

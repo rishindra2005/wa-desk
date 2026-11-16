@@ -13,8 +13,8 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use rusqlite::params;
-use wa_core::Result;
 use wa_core::traits::AppStore;
+use wa_core::{AppError, Result};
 
 use crate::Core;
 use crate::app_db::{AppDb, IndexRow, KV_COMPLETE, KV_WATERMARK};
@@ -88,11 +88,21 @@ impl Indexer {
 
     /// Drop the index and rebuild it from scratch. `progress(done, total)`.
     pub fn build_full(&self, progress: &dyn Fn(u64, u64)) -> Result<u64> {
+        self.build_full_with(progress, &|| false)
+    }
+
+    /// `build_full` that stops between batches (with `Cancelled`) once
+    /// `should_stop()` returns true. The index stays incomplete and resumable.
+    pub fn build_full_with(
+        &self,
+        progress: &dyn Fn(u64, u64),
+        should_stop: &dyn Fn() -> bool,
+    ) -> Result<u64> {
         let _run = self.core.index_lock.lock();
         self.core.building.store(true, Ordering::SeqCst);
         let _g = BuildGuard(&self.core);
         self.core.app.clear_index()?;
-        let n = self.run_from(0, progress)?;
+        let n = self.run_from(0, progress, should_stop)?;
         self.core.app.set_kv(KV_COMPLETE, "1")?;
         Ok(n)
     }
@@ -100,13 +110,22 @@ impl Indexer {
     /// Finish an interrupted/never-run build (resuming at the watermark), or
     /// run an incremental pass if the index is already complete.
     pub fn ensure(&self, progress: &dyn Fn(u64, u64)) -> Result<u64> {
+        self.ensure_with(progress, &|| false)
+    }
+
+    /// `ensure` with a cancel check between batches.
+    pub fn ensure_with(
+        &self,
+        progress: &dyn Fn(u64, u64),
+        should_stop: &dyn Fn() -> bool,
+    ) -> Result<u64> {
         if self.core.app.index_complete()? {
             return self.incremental();
         }
         let _run = self.core.index_lock.lock();
         self.core.building.store(true, Ordering::SeqCst);
         let _g = BuildGuard(&self.core);
-        let n = self.run_from(self.core.app.watermark()?, progress)?;
+        let n = self.run_from(self.core.app.watermark()?, progress, should_stop)?;
         self.core.app.set_kv(KV_COMPLETE, "1")?;
         Ok(n)
     }
@@ -114,7 +133,7 @@ impl Indexer {
     /// Index rows above the watermark. Returns rows processed.
     pub fn incremental(&self) -> Result<u64> {
         let _run = self.core.index_lock.lock();
-        self.run_from(self.core.app.watermark()?, &|_, _| {})
+        self.run_from(self.core.app.watermark()?, &|_, _| {}, &|| false)
     }
 
     /// Like `incremental` but returns `None` immediately if another index operation runs.
@@ -125,7 +144,7 @@ impl Indexer {
         if self.is_building() {
             return Ok(None);
         }
-        self.run_from(self.core.app.watermark()?, &|_, _| {})
+        self.run_from(self.core.app.watermark()?, &|_, _| {}, &|| false)
             .map(Some)
     }
 
@@ -147,7 +166,12 @@ impl Indexer {
         Ok(out)
     }
 
-    fn run_from(&self, start: i64, progress: &dyn Fn(u64, u64)) -> Result<u64> {
+    fn run_from(
+        &self,
+        start: i64,
+        progress: &dyn Fn(u64, u64),
+        should_stop: &dyn Fn() -> bool,
+    ) -> Result<u64> {
         let total = {
             let conn = self.core.bridge.get()?;
             raw::max_rowid(&conn)?
@@ -157,6 +181,9 @@ impl Indexer {
         let mut done = 0u64;
         progress(0, total.saturating_sub(start).max(0) as u64);
         loop {
+            if should_stop() {
+                return Err(AppError::cancelled());
+            }
             let batch = self.read_batch(wm)?;
             let Some(last) = batch.last().map(|r| r.rowid) else {
                 break;
@@ -202,6 +229,16 @@ impl Indexer {
     /// missing ones and delete index rows whose (chat, id) no longer exists
     /// (e.g. after the bridge's LID→phone chat migration).
     pub fn reconcile(&self, progress: &dyn Fn(u64, u64)) -> Result<ReconcileStats> {
+        self.reconcile_with(progress, &|| false)
+    }
+
+    /// `reconcile` with a cancel check between batches (nothing is deleted
+    /// when it stops early).
+    pub fn reconcile_with(
+        &self,
+        progress: &dyn Fn(u64, u64),
+        should_stop: &dyn Fn() -> bool,
+    ) -> Result<ReconcileStats> {
         let _run = self.core.index_lock.lock();
         let names = self.core.names.snapshot()?;
         let total = {
@@ -212,6 +249,9 @@ impl Indexer {
         let mut seen: HashSet<(String, String)> = HashSet::new();
         let mut wm = 0i64;
         loop {
+            if should_stop() {
+                return Err(AppError::cancelled());
+            }
             let batch = self.read_batch(wm)?;
             let Some(last) = batch.last().map(|r| r.rowid) else {
                 break;

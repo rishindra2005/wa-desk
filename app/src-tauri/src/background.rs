@@ -21,6 +21,12 @@ pub const RECONCILE_EVERY: Duration = Duration::from_secs(6 * 3600);
 pub const INDEX_CHECK_EVERY: Duration = Duration::from_secs(300);
 /// Outbox cleanup interval.
 pub const CLEANUP_EVERY: Duration = Duration::from_secs(24 * 3600);
+/// Chat-name refresh interval (also run once shortly after startup).
+pub const NAMES_EVERY: Duration = Duration::from_secs(6 * 3600);
+/// Cache-warm pass interval (also kicked after link/backfill jobs).
+pub const WARM_EVERY: Duration = Duration::from_secs(6 * 3600);
+/// Delay before the first warm pass, so startup stays snappy.
+pub const WARM_FIRST: Duration = Duration::from_secs(20);
 /// Upper bound for error backoff.
 pub const MAX_BACKOFF: Duration = Duration::from_secs(60);
 
@@ -142,6 +148,16 @@ pub fn spawn_all(core: Arc<AppCore>, shutdown: CancellationToken) {
         |c| async move { c.reconcile_tick().await },
     ));
     tokio::spawn(run_loop(
+        core.clone(),
+        "chat_names",
+        "Chat names could not be refreshed",
+        NAMES_EVERY,
+        Duration::from_secs(5),
+        shutdown.clone(),
+        |c| async move { c.refresh_names_tick().await },
+    ));
+    tokio::spawn(warm_loop(core.clone(), shutdown.clone()));
+    tokio::spawn(run_loop(
         core,
         "outbox_cleanup",
         "Outbox cleanup failed",
@@ -150,6 +166,26 @@ pub fn spawn_all(core: Arc<AppCore>, shutdown: CancellationToken) {
         shutdown,
         |c| async move { c.outbox_cleanup_tick().await.map(|_| ()) },
     ));
+}
+
+/// Cache warmer: first pass shortly after startup, then every 6 h or when kicked.
+async fn warm_loop(core: Arc<AppCore>, shutdown: CancellationToken) {
+    tokio::select! {
+        _ = shutdown.cancelled() => return,
+        _ = tokio::time::sleep(WARM_FIRST) => {}
+    }
+    loop {
+        let c = core.clone();
+        let sd = shutdown.clone();
+        if let Err(e) = guarded(async move { c.warm_pass(&sd).await.map(|_| ()) }).await {
+            tracing::warn!(error = %e, "cache warm pass failed");
+        }
+        let state = core.warm_state().clone();
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = state.wait(WARM_EVERY) => {}
+        }
+    }
 }
 
 #[cfg(test)]

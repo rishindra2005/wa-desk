@@ -46,6 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let p = db.get_messages(&MessagesQuery {
             chat_jid: jid.clone(),
             before: None,
+            after: None,
             limit: Some(80),
         })?;
         println!(
@@ -82,6 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let p = db.get_messages(&MessagesQuery {
             chat_jid: jid.clone(),
             before: None,
+            after: None,
             limit: Some(80),
         })?;
         println!(

@@ -28,6 +28,9 @@ pub struct Tools {
     pub gs: PathBuf,
     pub pdftoppm: PathBuf,
     pub rsync: PathBuf,
+    /// Run thumbnail/preview tools at the lowest CPU priority (`nice -n 19`);
+    /// used by the background cache warmer.
+    pub low_priority: bool,
 }
 
 impl Default for Tools {
@@ -39,6 +42,7 @@ impl Default for Tools {
             gs: "gs".into(),
             pdftoppm: "pdftoppm".into(),
             rsync: "rsync".into(),
+            low_priority: false,
         }
     }
 }
@@ -60,6 +64,7 @@ pub struct Tool {
     args: Vec<OsString>,
     timeout: Duration,
     ok_codes: Vec<i32>,
+    nice: bool,
 }
 
 impl Tool {
@@ -71,7 +76,15 @@ impl Tool {
             args: Vec::new(),
             timeout: Duration::from_secs(600),
             ok_codes: vec![0],
+            nice: false,
         }
+    }
+
+    /// Run under `nice -n 19` when `on` (falls back to normal priority when
+    /// `nice` itself is missing).
+    pub fn nice(mut self, on: bool) -> Self {
+        self.nice = on && nice_available();
+        self
     }
 
     pub fn arg(mut self, a: impl Into<OsString>) -> Self {
@@ -105,7 +118,13 @@ impl Tool {
         cancel: &CancellationToken,
         mut on_line: Option<&mut (dyn FnMut(&str) + Send)>,
     ) -> Result<ToolOutput> {
-        let mut cmd = tokio::process::Command::new(&self.program);
+        let mut cmd = if self.nice {
+            let mut c = tokio::process::Command::new("nice");
+            c.args(["-n", "19"]).arg(&self.program);
+            c
+        } else {
+            tokio::process::Command::new(&self.program)
+        };
         cmd.args(&self.args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -170,6 +189,12 @@ impl Tool {
         if code.is_some_and(|c| self.ok_codes.contains(&c)) {
             return Ok(out);
         }
+        if self.nice && code == Some(127) {
+            return Err(AppError::external(format!(
+                "{} is not installed",
+                self.name
+            )));
+        }
         let how = match code {
             Some(c) => format!("exit code {c}"),
             None => "killed by a signal".to_string(),
@@ -177,6 +202,14 @@ impl Tool {
         Err(AppError::external(format!("{} failed ({how})", self.name))
             .with_detail(out.stderr_tail.trim().to_string()))
     }
+}
+
+fn nice_available() -> bool {
+    static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        std::env::var_os("PATH")
+            .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("nice").is_file()))
+    })
 }
 
 /// SIGTERM the whole group, wait up to `KILL_GRACE`, then SIGKILL.
@@ -279,6 +312,22 @@ mod tests {
         assert_eq!(out.stdout, "a\rb\nc");
         assert_eq!(out.stderr_tail.trim(), "err");
         assert_eq!(out.code, Some(0));
+    }
+
+    #[tokio::test]
+    async fn nice_runs_and_reports_missing_tools() {
+        let out = sh("echo $(nice)")
+            .nice(true)
+            .run(&CancellationToken::new(), None)
+            .await
+            .unwrap();
+        assert_eq!(out.stdout.trim(), "19");
+        let e = Tool::new("ffmpeg", Path::new("/nonexistent/ffmpeg-x"))
+            .nice(true)
+            .run(&CancellationToken::new(), None)
+            .await
+            .unwrap_err();
+        assert_eq!(e.message, "ffmpeg is not installed");
     }
 
     #[tokio::test]

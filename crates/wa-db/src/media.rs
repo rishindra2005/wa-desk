@@ -38,6 +38,14 @@ pub fn media_url(prefix: &str, chat_jid: &str, message_id: &str) -> String {
     )
 }
 
+/// `wa-media://localhost/a/<jid>`: the chat's or person's profile picture.
+pub fn avatar_url(jid: &str) -> String {
+    format!(
+        "wa-media://localhost/a/{}",
+        utf8_percent_encode(jid, SEGMENT)
+    )
+}
+
 /// Reject ids that could escape a directory or confuse path building.
 pub fn validate_component(what: &str, v: &str) -> Result<()> {
     if v.is_empty()
@@ -413,6 +421,11 @@ fn build_items(
             message_id: r.id.clone(),
             chat_jid: r.chat_jid.clone(),
             chat_name: names.chat_name(&r.chat_jid),
+            sender_jid: if r.is_from_me {
+                None
+            } else {
+                crate::messages::sender_jid_of(&r, names)
+            },
             sender_name: names.sender_name(&crate::messages::sender_of(&r), r.is_from_me),
             is_from_me: r.is_from_me,
             ts: r.ts,
@@ -436,6 +449,18 @@ mod tests {
         assert_eq!(
             media_url("t", "a:b@s.whatsapp.net", "ID-1_x.~"),
             "wa-media://localhost/t/a%3Ab%40s.whatsapp.net/ID-1_x.~"
+        );
+    }
+
+    #[test]
+    fn avatar_urls_are_encoded() {
+        assert_eq!(
+            avatar_url("1203@g.us"),
+            "wa-media://localhost/a/1203%40g.us"
+        );
+        assert_eq!(
+            avatar_url("a:b/c@lid"),
+            "wa-media://localhost/a/a%3Ab%2Fc%40lid"
         );
     }
 

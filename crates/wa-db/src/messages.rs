@@ -136,6 +136,19 @@ pub(crate) fn assemble(
             quoted.insert((r.chat_jid.clone(), r.id.clone()), (*r).clone());
         }
     }
+    let keys: Vec<(&str, &str)> = rows
+        .iter()
+        .filter(|r| r.is_from_me && !r.is_reaction())
+        .map(|r| (r.chat_jid.as_str(), r.id.as_str()))
+        .collect();
+    let receipts = crate::receipts::statuses(conn, &keys)?;
+    let mut starred: HashSet<(String, String)> = HashSet::new();
+    for (chat, rs) in &by_chat {
+        let ids: Vec<&str> = rs.iter().map(|r| r.id.as_str()).collect();
+        for id in core.app.starred_among(chat, &ids)? {
+            starred.insert(((*chat).to_string(), id));
+        }
+    }
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         let q = r.quoted_id.as_ref().map(|qid| {
@@ -149,7 +162,10 @@ pub(crate) fn assemble(
         let rx = reactions
             .remove(&(r.chat_jid.clone(), r.id.clone()))
             .unwrap_or_default();
-        out.push(to_message(core, names, conn, r, q, rx)?);
+        let mut m = to_message(core, names, conn, r, q, rx)?;
+        m.status = crate::receipts::status_of(&receipts, &r.chat_jid, &r.id, r.is_from_me);
+        m.starred = starred.contains(&(r.chat_jid.clone(), r.id.clone()));
+        out.push(m);
     }
     Ok(out)
 }
@@ -185,6 +201,8 @@ fn to_message(
         quoted,
         reactions,
         deleted,
+        status: None,
+        starred: false,
     })
 }
 
@@ -208,7 +226,7 @@ fn keys_around(
     if n == 0 {
         return Ok(Vec::new());
     }
-    let mut keys: Vec<ChatKey> = if core.index_ready()? {
+    let mut keys: Vec<ChatKey> = if core.index_ready()? && is_indexed_chat(chat) {
         let wm = core.app.watermark()?;
         let sql = match dir {
             Dir::Older => {
@@ -246,6 +264,12 @@ fn keys_around(
     }
     keys.truncate(n);
     Ok(keys)
+}
+
+/// Whether the search index holds this chat's rows (channels, broadcast lists
+/// and status are read straight from messages.db).
+pub(crate) fn is_indexed_chat(chat: &str) -> bool {
+    !crate::names::is_status_jid(chat)
 }
 
 /// Non-reaction rows of `chat` above the index watermark (not yet indexed).
@@ -287,13 +311,17 @@ pub(crate) fn get_messages(core: &Core, q: &MessagesQuery) -> Result<Page<Messag
         return Err(AppError::invalid("chat_jid is required"));
     }
     let limit = clamp_limit(q.limit, 80, 500);
-    let pivot = match q.before.as_deref() {
-        Some(c) => decode_msg_cursor(c)?,
-        None => (i64::MAX, i64::MAX),
+    if q.before.is_some() && q.after.is_some() {
+        return Err(AppError::invalid("use either before or after, not both"));
+    }
+    let (pivot, dir) = match (q.before.as_deref(), q.after.as_deref()) {
+        (_, Some(a)) => (decode_msg_cursor(a)?, Dir::Newer),
+        (Some(b), None) => (decode_msg_cursor(b)?, Dir::Older),
+        (None, None) => ((i64::MAX, i64::MAX), Dir::Older),
     };
     let names = core.names.snapshot()?;
     let conn = core.bridge.get()?;
-    let mut keys = keys_around(core, &conn, &q.chat_jid, pivot, Dir::Older, limit + 1)?;
+    let mut keys = keys_around(core, &conn, &q.chat_jid, pivot, dir, limit + 1)?;
     let more = keys.len() > limit;
     keys.truncate(limit);
     let next_cursor = if more {
@@ -304,6 +332,18 @@ pub(crate) fn get_messages(core: &Core, q: &MessagesQuery) -> Result<Page<Messag
     let rows = rows_for(&conn, &q.chat_jid, &keys)?;
     let items = assemble(core, &names, &conn, &rows)?;
     Ok(Page { items, next_cursor })
+}
+
+/// Messages of one chat by id (unknown ids skipped), ascending.
+pub(crate) fn messages_by_ids(core: &Core, chat_jid: &str, ids: &[String]) -> Result<Vec<Message>> {
+    let names = core.names.snapshot()?;
+    let conn = core.bridge.get()?;
+    let mut rows: Vec<RawMsg> = raw::by_ids(&conn, chat_jid, ids)?
+        .into_iter()
+        .filter(|r| !r.is_reaction())
+        .collect();
+    rows.sort_by_key(RawMsg::key);
+    assemble(core, &names, &conn, &rows)
 }
 
 /// `get_message` by primary key.

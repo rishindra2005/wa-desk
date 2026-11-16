@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
 use wa_core::Result;
+use wa_core::types::{ChatRef, ChatType};
 
 use crate::bridge_ro::{PAGE_ROWS, RoPool};
 
@@ -86,6 +87,30 @@ pub struct NameCache {
     chat_names: HashMap<String, Option<String>>,
     own_users: HashSet<String>,
     own_pn: Option<String>,
+    /// Bridge `chat_meta` rows (empty when the table does not exist yet).
+    meta: HashMap<String, ChatMeta>,
+}
+
+/// One bridge `chat_meta` row.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ChatMeta {
+    pub chat_type: Option<ChatType>,
+    pub parent_jid: Option<String>,
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Map a stored `chat_meta.chat_type`.
+pub fn chat_type_from_meta(s: &str) -> Option<ChatType> {
+    match s.trim() {
+        "group" => Some(ChatType::Group),
+        "community" => Some(ChatType::Community),
+        "channel" | "newsletter" => Some(ChatType::Channel),
+        "broadcast" => Some(ChatType::Broadcast),
+        "status" => Some(ChatType::Status),
+        "direct" | "user" => Some(ChatType::Direct),
+        _ => None,
+    }
 }
 
 impl NameCache {
@@ -184,6 +209,14 @@ impl NameCache {
         if jid == STATUS_JID {
             return "Status".to_string();
         }
+        if let Some(n) = self.meta_name(jid) {
+            return n.to_string();
+        }
+        match ChatType::from_jid(jid) {
+            ChatType::Channel => return "WhatsApp channel".to_string(),
+            ChatType::Broadcast => return "Broadcast list".to_string(),
+            _ => {}
+        }
         if is_group_jid(jid) || is_status_jid(jid) {
             let stored = self.chat_names.get(jid).cloned().flatten();
             return match stored {
@@ -195,6 +228,66 @@ impl NameCache {
         norm.as_deref()
             .and_then(|n| self.person_name(n))
             .unwrap_or_else(|| self.fallback(norm.as_deref(), jid))
+    }
+
+    /// Real name from bridge `chat_meta` (None when empty or a placeholder).
+    fn meta_name(&self, jid: &str) -> Option<&str> {
+        let n = self.meta.get(jid)?.name.as_deref()?.trim();
+        (!is_placeholder_name(jid, Some(n))).then_some(n)
+    }
+
+    /// Bridge metadata of a chat, if any.
+    pub fn meta(&self, jid: &str) -> Option<&ChatMeta> {
+        self.meta.get(jid)
+    }
+
+    /// What a chat is: bridge metadata first, else derived from the JID.
+    pub fn chat_type(&self, jid: &str) -> ChatType {
+        if jid == STATUS_JID {
+            return ChatType::Status;
+        }
+        self.meta
+            .get(jid)
+            .and_then(|m| m.chat_type)
+            .unwrap_or_else(|| ChatType::from_jid(jid))
+    }
+
+    /// Lightweight reference to a chat.
+    pub fn chat_ref(&self, jid: &str) -> ChatRef {
+        ChatRef {
+            jid: jid.to_string(),
+            name: self.chat_name(jid),
+            chat_type: self.chat_type(jid),
+        }
+    }
+
+    /// The community a sub-group belongs to.
+    pub fn parent(&self, jid: &str) -> Option<ChatRef> {
+        let p = self.meta.get(jid)?.parent_jid.as_deref()?.trim();
+        (!p.is_empty() && p != jid).then(|| self.chat_ref(p))
+    }
+
+    /// Groups that list `parent` as their community.
+    pub fn children(&self, parent: &str) -> Vec<ChatRef> {
+        let mut v: Vec<ChatRef> = self
+            .meta
+            .iter()
+            .filter(|(j, m)| m.parent_jid.as_deref() == Some(parent) && j.as_str() != parent)
+            .map(|(j, _)| self.chat_ref(j))
+            .collect();
+        v.sort_by_key(|c| c.name.to_lowercase());
+        v
+    }
+
+    /// Our own user parts (phone and LID), for @mention detection.
+    pub fn own_user_parts(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.own_users.iter().cloned().collect();
+        if let Some(l) = self.own_pn.as_ref().and_then(|pn| self.pn_to_lid.get(pn)) {
+            v.push(l.clone());
+        }
+        v.sort();
+        v.dedup();
+        v
     }
 
     /// Every stored form a sender may appear as (both phone and LID forms).
@@ -238,6 +331,7 @@ pub struct NameResolver {
     bridge: Arc<RoPool>,
     wa: Arc<RoPool>,
     cache: RwLock<Option<(Instant, Arc<NameCache>)>>,
+    loading: parking_lot::Mutex<()>,
 }
 
 impl NameResolver {
@@ -247,6 +341,7 @@ impl NameResolver {
             bridge,
             wa,
             cache: RwLock::new(None),
+            loading: parking_lot::Mutex::new(()),
         }
     }
 
@@ -256,7 +351,22 @@ impl NameResolver {
     }
 
     /// Current snapshot (loads on first use or after TTL / invalidate).
+    ///
+    /// Single-flight: only one caller reloads; while it does, others keep
+    /// using the expired snapshot (if there is one) instead of piling up
+    /// identical ~200 ms reloads.
     pub fn snapshot(&self) -> Result<Arc<NameCache>> {
+        let stale = match self.cache.read().as_ref() {
+            Some((at, c)) if at.elapsed() < TTL => return Ok(Arc::clone(c)),
+            Some((_, c)) => Some(Arc::clone(c)),
+            None => None,
+        };
+        let _loading = match (self.loading.try_lock(), stale) {
+            (Some(g), _) => g,
+            (None, Some(s)) => return Ok(s),
+            (None, None) => self.loading.lock(),
+        };
+        // Someone else may have finished loading while we waited.
         if let Some((at, c)) = self.cache.read().as_ref()
             && at.elapsed() < TTL
         {
@@ -272,6 +382,10 @@ impl NameResolver {
             chat_names: load_chat_names(&self.bridge)?,
             ..Default::default()
         };
+        match load_chat_meta(&self.bridge) {
+            Ok(m) => c.meta = m,
+            Err(e) => tracing::warn!(kind = ?e.kind, "chat_meta unreadable; chat types from JIDs"),
+        }
         if self.wa.available() {
             if let Err(e) = load_whatsmeow(&self.wa, &mut c) {
                 tracing::warn!(kind = ?e.kind, "whatsapp.db unreadable; names degrade");
@@ -298,6 +412,49 @@ fn load_chat_names(pool: &RoPool) -> Result<HashMap<String, Option<String>>> {
             last = j.clone();
         }
         out.extend(page);
+        if n < PAGE_ROWS {
+            return Ok(out);
+        }
+    }
+}
+
+type MetaRow = (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+fn load_chat_meta(pool: &RoPool) -> Result<HashMap<String, ChatMeta>> {
+    let conn = pool.get()?;
+    let mut out = HashMap::new();
+    if !conn.has_table("chat_meta")? {
+        return Ok(out);
+    }
+    let mut last = String::new();
+    loop {
+        let page: Vec<MetaRow> = conn.rows(
+            "SELECT jid, chat_type, parent_jid, name, description FROM chat_meta \
+                 WHERE jid > ?1 ORDER BY jid LIMIT 500",
+            [&last],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )?;
+        let n = page.len();
+        for (jid, ty, parent, name, desc) in page {
+            last = jid.clone();
+            let clean =
+                |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+            out.insert(
+                jid,
+                ChatMeta {
+                    chat_type: ty.as_deref().and_then(chat_type_from_meta),
+                    parent_jid: clean(parent),
+                    name: clean(name),
+                    description: clean(desc),
+                },
+            );
+        }
         if n < PAGE_ROWS {
             return Ok(out);
         }

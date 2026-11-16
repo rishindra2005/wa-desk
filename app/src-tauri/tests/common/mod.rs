@@ -29,6 +29,12 @@ pub struct Mock {
     pub connection: Arc<Mutex<Value>>,
     /// message id → (path to write, bytes) for /api/download.
     pub downloads: Arc<Mutex<Downloads>>,
+    /// Bridge store (avatars are written to `<store>/avatars`).
+    pub store: Arc<Mutex<Option<PathBuf>>>,
+    /// JIDs whose avatar request hangs (to test the 2 s cap).
+    pub slow_avatars: Arc<Mutex<Vec<String>>>,
+    /// When true the metadata endpoints answer 503 (disconnected).
+    pub meta_down: Arc<Mutex<bool>>,
 }
 
 impl Mock {
@@ -97,6 +103,133 @@ async fn download(State(m): State<Mock>, axum::Json(body): axum::Json<Value>) ->
         .into_response()
 }
 
+#[derive(serde::Deserialize)]
+pub struct JidQ {
+    jid: String,
+    full: Option<String>,
+}
+
+fn down() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        axum::Json(json!({"success": false, "message": "not connected"})),
+    )
+        .into_response()
+}
+
+fn nf(msg: &str) -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        axum::Json(json!({"success": false, "message": msg})),
+    )
+        .into_response()
+}
+
+async fn profile(
+    State(m): State<Mock>,
+    axum::extract::Query(q): axum::extract::Query<JidQ>,
+) -> Response {
+    record(&m, "/api/profile", json!({"jid": q.jid}));
+    if *m.meta_down.lock() {
+        return down();
+    }
+    match q.jid.as_str() {
+        "919811111111@s.whatsapp.net" | "919844444444@s.whatsapp.net" => axum::Json(json!({
+            "jid": q.jid, "push_name": "Ally P", "verified_name": null, "about": "At work",
+            "about_set_at": null, "picture_id": "1", "devices": [0],
+            "business": null
+        }))
+        .into_response(),
+        _ => nf("unknown user"),
+    }
+}
+
+async fn group(
+    State(m): State<Mock>,
+    axum::extract::Query(q): axum::extract::Query<JidQ>,
+) -> Response {
+    record(&m, "/api/group", json!({"jid": q.jid}));
+    if *m.meta_down.lock() {
+        return down();
+    }
+    if q.jid != wa_testkit::ids::GROUP_CLASS {
+        return nf("not a member");
+    }
+    axum::Json(json!({
+        "jid": q.jid, "name": "ML CSE - 3C", "topic": "Exam prep <b>only</b>",
+        "created_at": "2026-09-28T05:40:20Z", "creator": "919811111111@s.whatsapp.net",
+        "is_parent": false, "linked_parent_jid": null, "announce": true, "locked": false,
+        "participants": [
+            {"jid": "333333333333333@lid", "phone_jid": "919855555555@s.whatsapp.net", "lid": "333333333333333@lid",
+             "is_admin": false, "is_super_admin": false, "display_name": null},
+            {"jid": "919811111111@s.whatsapp.net", "phone_jid": "919811111111@s.whatsapp.net", "lid": null,
+             "is_admin": true, "is_super_admin": true, "display_name": null},
+            {"jid": "111111111111111@lid", "phone_jid": "919900000000@s.whatsapp.net", "lid": "111111111111111@lid",
+             "is_admin": false, "is_super_admin": false, "display_name": null},
+            {"jid": "919877777777@s.whatsapp.net", "phone_jid": "919877777777@s.whatsapp.net", "lid": null,
+             "is_admin": false, "is_super_admin": false, "display_name": "Zed"}
+        ]
+    }))
+    .into_response()
+}
+
+async fn newsletter(
+    State(m): State<Mock>,
+    axum::extract::Query(q): axum::extract::Query<JidQ>,
+) -> Response {
+    record(&m, "/api/newsletter", json!({"jid": q.jid}));
+    if *m.meta_down.lock() {
+        return down();
+    }
+    axum::Json(
+        json!({"jid": q.jid, "name": "Tech News", "description": "daily",
+                      "subscribers": 23101, "verified": true, "picture_id": null}),
+    )
+    .into_response()
+}
+
+async fn avatar(
+    State(m): State<Mock>,
+    axum::extract::Query(q): axum::extract::Query<JidQ>,
+) -> Response {
+    record(&m, "/api/avatar", json!({"jid": q.jid, "full": q.full}));
+    if m.slow_avatars.lock().contains(&q.jid) {
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    }
+    if q.jid.starts_with("none") || q.jid == wa_testkit::ids::DM_BOB {
+        return nf("no picture");
+    }
+    if q.jid.starts_with("evil") {
+        return axum::Json(json!({"path": "/etc/passwd", "picture_id": "1", "cached": true}))
+            .into_response();
+    }
+    let Some(store) = m.store.lock().clone() else {
+        return nf("no picture");
+    };
+    let dir = store.join("avatars");
+    std::fs::create_dir_all(&dir).unwrap();
+    let full = q.full.as_deref() == Some("1");
+    let p = dir.join(format!(
+        "{}{}.jpg",
+        q.jid.replace(':', "_"),
+        if full { "-full" } else { "" }
+    ));
+    std::fs::write(&p, b"\xFF\xD8\xFFavatar").unwrap();
+    axum::Json(json!({"path": p, "picture_id": "7", "cached": false})).into_response()
+}
+
+async fn refresh(State(m): State<Mock>) -> Response {
+    record(&m, "/api/chats/refresh", Value::Null);
+    if *m.meta_down.lock() {
+        return down();
+    }
+    axum::Json(
+        json!({"success": true, "groups": 2, "communities": 0, "channels": 0,
+                      "renamed": 1, "cached": false}),
+    )
+    .into_response()
+}
+
 /// Start the mock on a random port; returns (base url, mock).
 pub async fn start_mock() -> (String, Mock) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -112,6 +245,11 @@ pub async fn start_mock() -> (String, Mock) {
         .route("/api/react", post(ok))
         .route("/api/mark-read", post(ok))
         .route("/api/download", post(download))
+        .route("/api/profile", get(profile))
+        .route("/api/group", get(group))
+        .route("/api/newsletter", get(newsletter))
+        .route("/api/avatar", get(avatar))
+        .route("/api/chats/refresh", post(refresh))
         .layer(middleware::from_fn_with_state(m.clone(), guard))
         .with_state(m.clone());
     tokio::spawn(async move {
@@ -182,6 +320,7 @@ pub struct H {
 
 async fn build(mut f: Fixture, url: String, mock: Mock) -> H {
     f.paths.bridge_url = url;
+    *mock.store.lock() = Some(f.paths.bridge_store.clone());
     let rec = Arc::new(Rec::default());
     let platform = Arc::new(TestPlatform::default());
     let bridge = Arc::new(wa_bridge::BridgeClient::new(&f.paths).unwrap());

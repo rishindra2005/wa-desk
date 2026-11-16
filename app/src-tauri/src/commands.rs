@@ -6,9 +6,10 @@ use std::sync::Arc;
 use tauri::State;
 use wa_core::AppError;
 use wa_core::types::{
-    AutomationEvent, ChatQuery, ChatSummary, ConnectionState, Issue, JobRecord, JobSpec, LogFilter,
-    LogLine, MediaItem, MediaQuery, MediaRef, Message, MessagesQuery, Overview, Page, PreviewRef,
-    ReactReq, Rule, RuleEval, SearchQuery, SearchResults, SendReq, SendResult, Settings,
+    AutomationEvent, ChatQuery, ChatStats, ChatSummary, ConnectionState, ExportReq, ForwardReq,
+    Issue, JobRecord, JobSpec, LinkItem, LogFilter, LogLine, MediaItem, MediaQuery, MediaRef,
+    Message, MessagesQuery, Overview, Page, PreviewRef, Profile, ReactReq, Rule, RuleEval,
+    SearchHit, SearchQuery, SearchResults, SendReq, SendResult, Settings,
 };
 
 use crate::core::AppCore;
@@ -251,4 +252,86 @@ pub async fn get_settings(core: Core<'_>) -> R<Settings> {
 #[tauri::command]
 pub async fn set_settings(core: Core<'_>, settings: Settings) -> R<Settings> {
     logged("set_settings", core.set_settings(settings).await)
+}
+
+/// `get_profile` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn get_profile(core: Core<'_>, jid: String) -> R<Profile> {
+    logged("get_profile", core.get_profile(jid).await)
+}
+
+/// `chat_stats` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn chat_stats(core: Core<'_>, chat_jid: String) -> R<ChatStats> {
+    logged("chat_stats", core.chat_stats(chat_jid).await)
+}
+
+/// `list_links` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn list_links(
+    core: Core<'_>,
+    chat_jid: Option<String>,
+    cursor: Option<String>,
+    limit: u32,
+) -> R<Page<LinkItem>> {
+    logged("list_links", core.list_links(chat_jid, cursor, limit).await)
+}
+
+/// `set_starred` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn set_starred(
+    core: Core<'_>,
+    chat_jid: String,
+    message_ids: Vec<String>,
+    starred: bool,
+) -> R<()> {
+    logged(
+        "set_starred",
+        core.set_starred(chat_jid, message_ids, starred).await,
+    )
+}
+
+/// `list_starred` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn list_starred(
+    core: Core<'_>,
+    chat_jid: Option<String>,
+    cursor: Option<String>,
+    limit: u32,
+) -> R<Page<SearchHit>> {
+    logged(
+        "list_starred",
+        core.list_starred(chat_jid, cursor, limit).await,
+    )
+}
+
+/// `export_chat` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn export_chat(core: Core<'_>, req: ExportReq) -> R<String> {
+    logged("export_chat", core.export_chat(req).await)
+}
+
+/// `forward_messages` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn forward_messages(core: Core<'_>, req: ForwardReq) -> R<Vec<SendResult>> {
+    logged("forward_messages", core.forward_messages(req).await)
+}
+
+/// `copy_messages_text` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn copy_messages_text(
+    core: Core<'_>,
+    chat_jid: String,
+    message_ids: Vec<String>,
+) -> R<String> {
+    logged(
+        "copy_messages_text",
+        core.copy_messages_text(chat_jid, message_ids).await,
+    )
+}
+
+/// `refresh_chat_names` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn refresh_chat_names(core: Core<'_>) -> R<u32> {
+    logged("refresh_chat_names", core.refresh_chat_names().await)
 }

@@ -55,6 +55,43 @@ pub async fn office_preview_with(
     Ok(out)
 }
 
+/// Render an HTML file to PDF at `out` with LibreOffice (serialised with the
+/// other LibreOffice conversions; relative images next to the HTML are used).
+pub async fn html_to_pdf(
+    paths: &Paths,
+    tools: &Tools,
+    html: &Path,
+    out: &Path,
+    cancel: &CancellationToken,
+) -> Result<()> {
+    let src = canonical_input_file(html)?;
+    let work = WorkDir::new(&paths.cache)?;
+    let pdf = office_to_pdf(tools, &paths.cache, &src, work.path(), cancel).await?;
+    std::fs::rename(&pdf, out).or_else(|_| std::fs::copy(&pdf, out).map(|_| ()))?;
+    Ok(())
+}
+
+/// The cached thumbnail for `src`, if one was generated (never generates).
+pub fn cached_thumbnail(paths: &Paths, src: &Path) -> Result<Option<PathBuf>> {
+    let src = canonical_input_file(src)?;
+    let key = cache_key(&src, "thumb256")?;
+    let dir = paths.cache.join("thumbs");
+    Ok(["jpg", "webp"]
+        .iter()
+        .map(|e| dir.join(format!("{key}.{e}")))
+        .find(|p| p.is_file()))
+}
+
+/// The cached office preview PDF for `src`, if converted (never converts).
+pub fn cached_office_preview(paths: &Paths, src: &Path) -> Result<Option<PathBuf>> {
+    let src = canonical_input_file(src)?;
+    let out = paths
+        .cache
+        .join("previews")
+        .join(format!("{}.pdf", cache_key(&src, "pdf")?));
+    Ok(out.is_file().then_some(out))
+}
+
 fn is_pdf(src: &Path) -> bool {
     if src
         .extension()
@@ -167,6 +204,7 @@ async fn video_thumb(
             .args(["-frames:v", "1", "-vf", &scale])
             .arg(&tmp)
             .timeout(THUMB_TIMEOUT)
+            .nice(tools.low_priority)
             .run(cancel, None)
             .await;
         match r {
@@ -208,6 +246,7 @@ async fn pdf_thumb(
         .arg(src)
         .arg(&prefix)
         .timeout(THUMB_TIMEOUT)
+        .nice(tools.low_priority)
         .run(cancel, None)
         .await;
     match r {

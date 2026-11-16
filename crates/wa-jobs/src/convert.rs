@@ -447,6 +447,7 @@ pub(crate) async fn office_to_pdf(
         .arg(work)
         .arg(src)
         .timeout(OFFICE_TIMEOUT)
+        .nice(tools.low_priority)
         .run(cancel, None)
         .await?;
     std::fs::read_dir(work)?
