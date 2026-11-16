@@ -58,6 +58,20 @@ async fn guard(State(m): State<Mock>, req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
+async fn call_reject(State(m): State<Mock>, axum::Json(body): axum::Json<Value>) -> Response {
+    *m.last_body.lock() = body.clone();
+    match body["call_id"].as_str().unwrap_or_default() {
+        "gone" => (
+            StatusCode::CONFLICT,
+            axum::Json(json!({"success": false, "message": "call is not ringing"})),
+        )
+            .into_response(),
+        "down" => (StatusCode::SERVICE_UNAVAILABLE, "disconnected\n").into_response(),
+        "bad" => (StatusCode::BAD_GATEWAY, "whatsmeow said no\n").into_response(),
+        _ => axum::Json(json!({"success": true, "message": "rejected"})).into_response(),
+    }
+}
+
 async fn connection(State(m): State<Mock>) -> axum::Json<Value> {
     axum::Json(m.connection.lock().clone())
 }
@@ -229,6 +243,7 @@ impl Harness {
             .route("/api/download", post(download))
             .route("/api/react", post(ok_json))
             .route("/api/mark-read", post(ok_json))
+            .route("/api/call/reject", post(call_reject))
             .route("/api/health", get(health))
             .route("/api/profile", get(profile))
             .route("/api/group", get(group))
@@ -497,6 +512,41 @@ async fn react_and_mark_read_bodies() {
     assert_eq!(b["message_ids"][1], "M2");
     // Empty id list is a no-op, not a bridge 400.
     c.mark_read("g@g.us", &[], None).await.unwrap();
+}
+
+#[tokio::test]
+async fn reject_call_body_and_errors() {
+    let h = Harness::start().await;
+    let c = h.client();
+    c.reject_call("CALL1", "91@s.whatsapp.net").await.unwrap();
+    let b = h.mock.last_body.lock().clone();
+    assert_eq!(b["call_id"], "CALL1");
+    assert_eq!(b["caller_jid"], "91@s.whatsapp.net");
+    let e = c
+        .reject_call("gone", "91@s.whatsapp.net")
+        .await
+        .unwrap_err();
+    assert_eq!(e.kind, ErrorKind::Invalid);
+    assert_eq!(e.message, "That call is no longer ringing");
+    let e = c
+        .reject_call("down", "91@s.whatsapp.net")
+        .await
+        .unwrap_err();
+    assert_eq!(e.kind, ErrorKind::BridgeDown);
+    let e = c.reject_call("bad", "91@s.whatsapp.net").await.unwrap_err();
+    assert_eq!(e.kind, ErrorKind::External);
+    // Local validation never reaches the bridge.
+    assert_eq!(
+        c.reject_call("", "91@s.whatsapp.net")
+            .await
+            .unwrap_err()
+            .kind,
+        ErrorKind::Invalid
+    );
+    assert_eq!(
+        c.reject_call("X", "nojid").await.unwrap_err().kind,
+        ErrorKind::Invalid
+    );
 }
 
 #[tokio::test]

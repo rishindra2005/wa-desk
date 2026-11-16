@@ -231,6 +231,37 @@ impl Fixture {
         .unwrap()
     }
 
+    /// Insert or replace a `calls` row (the bridge upserts by `(call_id, chat_jid)`).
+    /// `result` is e.g. `in_progress`/`answered`/`ended`/`missed`/`rejected`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_call(
+        &self,
+        call_id: &str,
+        chat_jid: &str,
+        from_jid: &str,
+        ts: &str,
+        from_me: bool,
+        call_type: &str,
+        result: &str,
+        duration: Option<i64>,
+    ) -> i64 {
+        let c = self.bridge_conn();
+        c.execute(
+            "INSERT INTO calls (call_id, chat_jid, from_jid, timestamp, is_from_me, call_type, is_group, result, duration_sec)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
+             ON CONFLICT(call_id, chat_jid) DO UPDATE SET result=excluded.result, duration_sec=excluded.duration_sec,
+               ended_at=CASE WHEN excluded.result IN ('ended','missed','rejected') THEN excluded.timestamp ELSE ended_at END",
+            params![call_id, chat_jid, from_jid, ts, from_me, call_type, chat_jid.ends_with("@g.us"), result, duration],
+        )
+        .unwrap();
+        c.query_row(
+            "SELECT rowid FROM calls WHERE call_id=?1 AND chat_jid=?2",
+            params![call_id, chat_jid],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
     pub fn add_contact(
         &self,
         their_jid: &str,

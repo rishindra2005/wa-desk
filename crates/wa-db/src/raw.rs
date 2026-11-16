@@ -35,7 +35,7 @@ pub struct RawMsg {
     pub file_sha256: Option<Vec<u8>>,
 }
 
-fn text(r: &Row<'_>, i: usize) -> rusqlite::Result<Option<String>> {
+pub(crate) fn text(r: &Row<'_>, i: usize) -> rusqlite::Result<Option<String>> {
     Ok(match r.get_ref(i)? {
         ValueRef::Null => None,
         ValueRef::Integer(n) => Some(n.to_string()),
@@ -44,7 +44,7 @@ fn text(r: &Row<'_>, i: usize) -> rusqlite::Result<Option<String>> {
     })
 }
 
-fn boolish(r: &Row<'_>, i: usize) -> rusqlite::Result<bool> {
+pub(crate) fn boolish(r: &Row<'_>, i: usize) -> rusqlite::Result<bool> {
     Ok(match r.get_ref(i)? {
         ValueRef::Null => false,
         ValueRef::Integer(n) => n != 0,

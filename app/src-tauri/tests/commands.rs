@@ -305,8 +305,15 @@ async fn open_media_external_opens_named_copy() {
     assert_eq!(opened.len(), 1);
     // Opened under its original name (with extension) so the desktop picks the
     // right app, and the content is the stored file.
-    assert!(opened[0].ends_with("A3PDF/ML-MODULE 1 Notes.pdf"), "{:?}", opened[0]);
-    assert_eq!(std::fs::read(&opened[0]).unwrap(), wa_testkit::ids::PDF_BYTES);
+    assert!(
+        opened[0].ends_with("A3PDF/ML-MODULE 1 Notes.pdf"),
+        "{:?}",
+        opened[0]
+    );
+    assert_eq!(
+        std::fs::read(&opened[0]).unwrap(),
+        wa_testkit::ids::PDF_BYTES
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

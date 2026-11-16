@@ -10,6 +10,7 @@
 //!   compared with `msg_index`: edits and revokes (same rowid, new hash) and
 //!   vanished rows (LID delete+reinsert) report their chats as changed, and the
 //!   index is updated so the next poll stays quiet;
+//! - the newest 50 `calls` rows are re-hashed to report new or changed calls;
 //! - finally the index catches up incrementally (skipped while a full build runs).
 
 use std::collections::{BTreeSet, HashMap};
@@ -20,9 +21,11 @@ use parking_lot::Mutex;
 use wa_core::Result;
 use wa_core::time::now_epoch;
 use wa_core::traits::IncomingMessage;
+use wa_core::types::CallRecord;
 
 use crate::Core;
 use crate::bridge_ro::{PAGE_ROWS, RoConn};
+use crate::calls;
 use crate::indexer::Indexer;
 use crate::raw::{self, RawMsg};
 use crate::util::{HashFields, row_hash};
@@ -39,6 +42,8 @@ pub struct WatchOutcome {
     pub new: Vec<IncomingMessage>,
     /// Chats with edits, revokes, removals, renames or read-marker changes.
     pub changed_chats: Vec<String>,
+    /// Calls that are new or changed since the previous poll.
+    pub calls: Vec<CallRecord>,
     /// Highest rowid delivered so far.
     pub max_rowid: i64,
 }
@@ -50,6 +55,8 @@ struct State {
     data_version: i64,
     file_sig: Option<(SystemTime, u64)>,
     chats: HashMap<String, i64>,
+    /// (call_id, chat_jid) → hash of the newest `calls` rows.
+    calls: HashMap<(String, String), i64>,
 }
 
 /// Polls messages.db for changes. One instance per app.
@@ -112,6 +119,7 @@ impl Watcher {
             st.data_version = dv;
             st.file_sig = sig;
             st.chats = chat_hashes(conn)?;
+            st.calls = call_hashes(&calls::newest(conn, calls::WATCH_ROWS)?);
             if st.last_rowid >= max {
                 return Ok(WatchOutcome {
                     max_rowid: st.last_rowid,
@@ -152,6 +160,7 @@ impl Watcher {
                 changed_chats.extend(self.recent_changes(conn)?);
             }
         }
+        out.calls = self.changed_calls(st, conn, changed)?;
         st.data_version = dv;
         st.file_sig = sig;
         if self.core.index_ready()?
@@ -162,6 +171,31 @@ impl Watcher {
         out.changed_chats = changed_chats.into_iter().collect();
         out.max_rowid = st.last_rowid;
         Ok(out)
+    }
+
+    /// New or changed rows among the newest `calls` rows (only when the db changed).
+    fn changed_calls(
+        &self,
+        st: &mut State,
+        conn: &RoConn,
+        changed: bool,
+    ) -> Result<Vec<CallRecord>> {
+        if !changed {
+            return Ok(Vec::new());
+        }
+        let mut rows = calls::newest(conn, calls::WATCH_ROWS)?;
+        let hashes = call_hashes(&rows);
+        rows.retain(|r| {
+            let key = (r.call_id.clone(), r.chat_jid.clone());
+            st.calls.get(&key) != hashes.get(&key)
+        });
+        st.calls.extend(hashes);
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+        rows.sort_by_key(|r| r.rowid);
+        let names = self.core.names.snapshot()?;
+        Ok(rows.iter().map(|r| r.to_record(&names)).collect())
     }
 
     /// Re-hash indexed rows from the last 48 h; fix the index and return affected chats.
@@ -260,4 +294,10 @@ fn chat_hashes(conn: &RoConn) -> Result<HashMap<String, i64>> {
             return Ok(out);
         }
     }
+}
+
+fn call_hashes(rows: &[calls::RawCall]) -> HashMap<(String, String), i64> {
+    rows.iter()
+        .map(|r| ((r.call_id.clone(), r.chat_jid.clone()), r.hash()))
+        .collect()
 }

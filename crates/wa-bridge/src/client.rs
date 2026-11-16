@@ -260,6 +260,7 @@ fn interpret(status: StatusCode, text: &str, token: &str) -> Result<Value> {
         StatusCode::FORBIDDEN => AppError::forbidden(with("The bridge refused the request")),
         StatusCode::NOT_FOUND => AppError::not_found(with("Not found on the bridge")),
         StatusCode::SERVICE_UNAVAILABLE => AppError::bridge_down(with("WhatsApp is not connected")),
+        StatusCode::CONFLICT => AppError::invalid("That call is no longer ringing"),
         StatusCode::GATEWAY_TIMEOUT | StatusCode::REQUEST_TIMEOUT => {
             AppError::timeout(with("The bridge timed out"))
         }
@@ -516,6 +517,23 @@ impl BridgeApi for BridgeClient {
 
     async fn refresh_chats(&self) -> Result<RefreshStats> {
         self.refresh_impl().await
+    }
+
+    async fn reject_call(&self, call_id: &str, caller_jid: &str) -> Result<()> {
+        if call_id.trim().is_empty() || !caller_jid.contains('@') {
+            return Err(AppError::invalid(
+                "a call id and the caller's JID are required",
+            ));
+        }
+        let body = json!({"call_id": call_id, "caller_jid": caller_jid});
+        self.request(
+            Method::POST,
+            "/api/call/reject",
+            Some(&body),
+            self.timeouts.default,
+        )
+        .await
+        .map(|_| ())
     }
 }
 
