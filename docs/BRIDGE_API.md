@@ -79,3 +79,19 @@ These are the differences from the text above. Clients should code against these
   - Use `appstate.BuildArchive` (with the last message's time and key from `messages`), `BuildPin` and `BuildMute`, then `SendAppState`.
   - Update `chat_state` on success.
   - 503 when disconnected; 400 bad JID; 502 on a whatsmeow error.
+- **Implementation notes (as deployed, `whatsapp-bridge/chatstate_local.go`).** Clients should code against these:
+  - **Full syncs don't emit events.** whatsmeow drops `Archive`/`Pin`/`Mute` events on a full sync (`EmitAppStateEventsOnFullSync` is false, and the bridge keeps it that way so other app-state events aren't replayed). whatsmeow still writes every mutation, full sync included, into its own `whatsmeow_chat_settings` table in `whatsapp.db`. So `chat_state` is **reconciled from that table**:
+    - on every connect;
+    - after `events.AppStateSyncComplete` for `regular_low` or `regular_high`;
+    - at the end of `resync-state`.
+
+    Live events still upsert their one field.
+  - When a chat has both a `@lid` row and a phone row in whatsmeow's table, the LID row wins. A LID with no phone mapping is stored under its `@lid` JID.
+  - `resync-state` returns `{success, changed, cached}`. `cached` is true inside the 5-minute window. `changed` compares a snapshot of `chat_state` taken before the sync with the table afterwards, where a missing row counts as not archived, not pinned and not muted. Status codes: 503 when disconnected, 502 when `FetchAppState` fails, 500 on a local DB error. A failed resync is not cached.
+  - `muted_until`: whatsmeow's `MuteEndTimestamp` is in **milliseconds** and is stored ÷1000. A muted action whose end is missing, ≤0 or past whatsmeow's `MutedForever` (9999-12-31) is stored as `-1`. An expired mute keeps its past value, so clients should treat `muted_until <= now` (other than `-1`) as not muted.
+  - **Write endpoints:**
+    - **`jid`:** a phone JID, a `@lid` JID or a `@g.us` JID. Anything else returns 400. A LID input is stored under its phone JID.
+    - **Patch index:** the patch goes out with the DM's **LID** when one is known, because WhatsApp now indexes DMs by LID. Otherwise it uses the JID as given.
+    - **Required fields:** `archived` / `pinned` must be booleans. `until` is required: an integer that is either `-1` or in the future (seconds), or `null` to unmute. A missing or invalid value returns 400.
+    - **Archive range:** archive uses the newest `messages` row of the chat (`id`, `is_from_me`, plus `sender` as the participant for others' group messages). A chat with no messages sends no range.
+    - **Archive unpins:** archiving also sets `pinned = 0`, as `BuildArchive` does.
