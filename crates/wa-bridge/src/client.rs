@@ -13,7 +13,7 @@ use wa_core::config::Paths;
 use wa_core::time::now_epoch;
 use wa_core::traits::{
     BridgeApi, BridgeAvatar, BridgeGroup, BridgeNewsletter, BridgeProfile, BridgeSend,
-    DownloadOutcome, RefreshStats,
+    DownloadOutcome, RefreshStats, ResyncStats,
 };
 use wa_core::types::{BridgeState, ConnectionState};
 use wa_core::{AppError, ErrorKind, Result};
@@ -519,6 +519,41 @@ impl BridgeApi for BridgeClient {
         self.refresh_impl().await
     }
 
+    async fn resync_chat_state(&self) -> Result<ResyncStats> {
+        let v = self
+            .request(
+                Method::POST,
+                "/api/chats/resync-state",
+                None,
+                RESYNC_TIMEOUT,
+            )
+            .await?;
+        decode(v, "resync")
+    }
+
+    async fn set_archived(&self, jid: &str, archived: bool) -> Result<()> {
+        self.chat_state_call("archive", jid, json!({"archived": archived}))
+            .await
+    }
+
+    async fn set_pinned(&self, jid: &str, pinned: bool) -> Result<()> {
+        self.chat_state_call("pin", jid, json!({"pinned": pinned}))
+            .await
+    }
+
+    async fn set_muted(&self, jid: &str, until: Option<i64>) -> Result<()> {
+        if let Some(u) = until
+            && u != -1
+            && u <= wa_core::time::now_epoch()
+        {
+            return Err(AppError::invalid(
+                "The mute end must be in the future, or -1 for always",
+            ));
+        }
+        self.chat_state_call("mute", jid, json!({"until": until}))
+            .await
+    }
+
     async fn reject_call(&self, call_id: &str, caller_jid: &str) -> Result<()> {
         if call_id.trim().is_empty() || !caller_jid.contains('@') {
             return Err(AppError::invalid(
@@ -537,7 +572,28 @@ impl BridgeApi for BridgeClient {
     }
 }
 
+/// Timeout for the app-state resync (it fetches two patch collections).
+const RESYNC_TIMEOUT: Duration = Duration::from_secs(60);
+
 impl BridgeClient {
+    /// `POST /api/chat/<action>` with `{jid, ..fields}`.
+    async fn chat_state_call(&self, action: &str, jid: &str, fields: Value) -> Result<()> {
+        let jid = jid.trim();
+        if !jid.contains('@') {
+            return Err(AppError::invalid("a full JID (user@server) is required"));
+        }
+        let mut body = fields;
+        body["jid"] = json!(jid);
+        self.request(
+            Method::POST,
+            &format!("/api/chat/{action}"),
+            Some(&body),
+            self.timeouts.default,
+        )
+        .await
+        .map(|_| ())
+    }
+
     async fn get_meta<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
