@@ -73,6 +73,22 @@ async fn no_notification_when_focused_or_disabled_or_own() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn group_mention_of_own_lid_notifies() {
+    let h = harness().await;
+    prime(&h).await;
+    h.f.add_message(&Msg::text(
+        "GL1",
+        GROUP_CLASS,
+        "333333333333333",
+        &ts_now(0),
+        "@111111111111111 please review",
+    ));
+    h.core.watch_tick().await.unwrap();
+    let notes = h.platform.notes.lock().clone();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn group_notifies_only_when_mentioned() {
     let h = harness().await;
     prime(&h).await;
