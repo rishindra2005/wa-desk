@@ -9,8 +9,10 @@ use std::path::Path;
 use common::*;
 use wa_core::ErrorKind;
 use wa_core::types::*;
+use wa_testkit::Msg;
+#[cfg(unix)]
+use wa_testkit::TOKEN;
 use wa_testkit::ids::*;
-use wa_testkit::{Msg, TOKEN};
 
 const TS: &str = "2026-11-15 09:00:00+05:30";
 
@@ -233,6 +235,7 @@ async fn bad_requests_and_destinations_are_refused() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[cfg(unix)]
 async fn secrets_databases_and_outside_files_are_never_exported() {
     let h = harness().await;
     let store_file = |id: &str| {

@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
+#[cfg(unix)]
 use nix::sys::signal::{Signal, killpg};
+#[cfg(unix)]
 use nix::unistd::Pid;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Child;
@@ -129,8 +131,10 @@ impl Tool {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .process_group(0)
             .kill_on_drop(true);
+        // Own process group, so cancellation reaches the tool's children too.
+        #[cfg(unix)]
+        cmd.process_group(0);
         let mut child = cmd.spawn().map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 AppError::external(format!("{} is not installed", self.name))
@@ -205,6 +209,9 @@ impl Tool {
 }
 
 fn nice_available() -> bool {
+    if cfg!(not(unix)) {
+        return false;
+    }
     static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *AVAILABLE.get_or_init(|| {
         std::env::var_os("PATH")
@@ -213,7 +220,11 @@ fn nice_available() -> bool {
 }
 
 /// SIGTERM the whole group, wait up to `KILL_GRACE`, then SIGKILL.
+/// On Windows there are no process groups to signal: the tool is killed directly.
 async fn terminate(child: &mut Child, pgid: Option<i32>) {
+    #[cfg(not(unix))]
+    let _ = pgid;
+    #[cfg(unix)]
     if let Some(pg) = pgid {
         let _ = killpg(Pid::from_raw(pg), Signal::SIGTERM);
         if tokio::time::timeout(KILL_GRACE, child.wait()).await.is_ok() {
@@ -290,7 +301,8 @@ async fn read_tail(stderr: Option<impl AsyncRead + Unpin>) -> String {
     String::from_utf8_lossy(&tail).into_owned()
 }
 
-#[cfg(test)]
+// The tests drive `sh`, `sleep` and process groups, which are Unix-only.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::time::Instant;

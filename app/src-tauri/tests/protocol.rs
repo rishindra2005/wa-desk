@@ -112,6 +112,7 @@ fn x_url(p: &std::path::Path) -> String {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[cfg(unix)]
 async fn export_urls_are_scoped() {
     let h = harness().await;
     let ok = h.f.paths.exports.join("out 50%.txt");

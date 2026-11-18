@@ -5,11 +5,11 @@
 //! `outbox/<uuid>/<sanitized name>` (dir 0700, file 0600). Blocking: call it
 //! from `spawn_blocking` in async code.
 
-use std::fs::{self, DirBuilder, OpenOptions};
+use std::fs;
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
+use wa_core::fsx;
 
 use wa_core::config::Paths;
 use wa_core::paths::{SECRET_NAMES, sanitize_file_name};
@@ -65,7 +65,7 @@ pub fn stage_with_limit(paths: &Paths, src: &Path, max_bytes: u64) -> Result<Pat
     );
     ensure_dir(&paths.outbox)?;
     let dir = paths.outbox.join(uuid::Uuid::new_v4().to_string());
-    DirBuilder::new().mode(0o700).create(&dir)?;
+    fsx::create_private_dir(&dir, false)?;
     let dest = dir.join(&name);
     if let Err(e) = copy_private(&real, &dest) {
         let _ = fs::remove_dir_all(&dir);
@@ -94,17 +94,13 @@ pub fn stage_bytes(paths: &Paths, name: &str, bytes: &[u8]) -> Result<PathBuf> {
     let name = sanitize_file_name(raw_base);
     ensure_dir(&paths.outbox)?;
     let dir = paths.outbox.join(uuid::Uuid::new_v4().to_string());
-    DirBuilder::new().mode(0o700).create(&dir)?;
+    fsx::create_private_dir(&dir, false)?;
     let dest = dir.join(&name);
     let written = (|| -> Result<()> {
-        let mut out = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&dest)?;
+        let mut out = fsx::private_create_new().open(&dest)?;
         io::Write::write_all(&mut out, bytes)?;
         out.sync_all()?;
-        fs::set_permissions(&dest, fs::Permissions::from_mode(0o600))?;
+        fsx::make_private_file(&dest)?;
         Ok(())
     })();
     if let Err(e) = written {
@@ -117,22 +113,18 @@ pub fn stage_bytes(paths: &Paths, name: &str, bytes: &[u8]) -> Result<PathBuf> {
 
 fn ensure_dir(dir: &Path) -> Result<()> {
     if !dir.exists() {
-        DirBuilder::new().mode(0o700).recursive(true).create(dir)?;
+        fsx::create_private_dir(dir, true)?;
     }
     Ok(())
 }
 
 fn copy_private(src: &Path, dest: &Path) -> Result<()> {
     let mut input = fs::File::open(src)?;
-    let mut out = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(dest)?;
+    let mut out = fsx::private_create_new().open(dest)?;
     io::copy(&mut input, &mut out)?;
     out.sync_all()?;
     // The umask may have narrowed the mode further; make it exactly 0600.
-    fs::set_permissions(dest, fs::Permissions::from_mode(0o600))?;
+    fsx::make_private_file(dest)?;
     Ok(())
 }
 
@@ -171,6 +163,7 @@ pub fn cleanup_older_than(paths: &Paths, age: Duration) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::symlink;
     use wa_core::ErrorKind;
 
@@ -189,13 +182,11 @@ mod tests {
         assert!(out.starts_with(fs::canonicalize(&p.outbox).unwrap()));
         assert_eq!(out.file_name().unwrap(), "Report (final).pdf");
         assert_eq!(fs::read(&out).unwrap(), b"%PDF-1.4");
-        let fmode = fs::metadata(&out).unwrap().permissions().mode() & 0o777;
-        let dmode = fs::metadata(out.parent().unwrap())
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!((fmode, dmode), (0o600, 0o700));
+        if cfg!(unix) {
+            let fmode = fsx::unix_mode(&out).unwrap();
+            let dmode = fsx::unix_mode(out.parent().unwrap()).unwrap();
+            assert_eq!((fmode, dmode), (Some(0o600), Some(0o700)));
+        }
         // Two stagings of the same file never collide.
         let out2 = stage(&p, &src).unwrap();
         assert_ne!(out, out2);
@@ -214,6 +205,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn rejects_bad_inputs() {
         let (d, p) = setup();
         let k = |path: &Path| stage(&p, path).unwrap_err().kind;
@@ -246,6 +238,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn symlink_to_file_is_resolved() {
         let (d, p) = setup();
         let real = d.path().join("real.txt");
@@ -275,8 +268,9 @@ mod tests {
         assert!(out.starts_with(fs::canonicalize(&p.outbox).unwrap()));
         assert_eq!(out.file_name().unwrap(), "image.png");
         assert_eq!(fs::read(&out).unwrap(), b"\x89PNG");
-        let fmode = fs::metadata(&out).unwrap().permissions().mode() & 0o777;
-        assert_eq!(fmode, 0o600);
+        if cfg!(unix) {
+            assert_eq!(fsx::unix_mode(&out).unwrap(), Some(0o600));
+        }
         // Path tricks in the name collapse to a single safe component.
         let out = stage_bytes(&p, "../../etc/passwd", b"x").unwrap();
         assert_eq!(out.file_name().unwrap(), "passwd");

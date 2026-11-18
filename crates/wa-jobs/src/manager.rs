@@ -80,11 +80,19 @@ pub fn default_phone_root() -> PathBuf {
     if let Some(d) = std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()) {
         return PathBuf::from(d).join("gvfs");
     }
-    use std::os::unix::fs::MetadataExt;
-    let uid = std::fs::metadata("/proc/self")
-        .map(|m| m.uid())
-        .unwrap_or(1000);
-    PathBuf::from(format!("/run/user/{uid}/gvfs"))
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let uid = std::fs::metadata("/proc/self")
+            .map(|m| m.uid())
+            .unwrap_or(1000);
+        PathBuf::from(format!("/run/user/{uid}/gvfs"))
+    }
+    // No GVFS/MTP mount outside Linux; phone sync simply finds no phones there.
+    #[cfg(not(unix))]
+    {
+        std::env::temp_dir().join("wa-desk-no-gvfs")
+    }
 }
 
 /// Handle given to a running job: progress, outputs and cancellation.

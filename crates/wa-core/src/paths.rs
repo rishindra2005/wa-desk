@@ -144,6 +144,7 @@ pub fn sanitize_file_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::fs;
 
     #[test]
@@ -206,6 +207,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn resolve_within_blocks_escapes_and_secrets() {
         let root = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();

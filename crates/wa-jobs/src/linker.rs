@@ -6,12 +6,12 @@
 //! extra folders). Existing store files are never overwritten.
 
 use std::collections::{BTreeMap, HashMap};
-use std::fs::{self, DirBuilder, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use wa_core::fsx;
 
 use parking_lot::Mutex;
 use wa_core::paths::bridge_media_path;
@@ -161,8 +161,8 @@ fn find_match<'a>(idx: &'a Index, row: &MediaInfo) -> Option<(&'a Candidate, &'s
 
 fn ensure_private_dir(dir: &Path) -> io::Result<()> {
     if !dir.exists() {
-        DirBuilder::new().mode(0o700).recursive(true).create(dir)?;
-        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+        fsx::create_private_dir(dir, true)?;
+        fsx::make_private_dir(dir)?;
     }
     Ok(())
 }
@@ -183,7 +183,7 @@ fn place(src: &Candidate, dest: &Path) -> io::Result<&'static str> {
         }
         "copy"
     };
-    fs::set_permissions(dest, fs::Permissions::from_mode(0o600))?;
+    fsx::make_private_file(dest)?;
     Ok(how)
 }
 
@@ -321,6 +321,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn walk_skips_hidden_symlinks_and_big_extra() {
         let d = tempfile::tempdir().unwrap();
         let r = d.path();

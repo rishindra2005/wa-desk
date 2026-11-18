@@ -1,3 +1,6 @@
+//! Phone sync relies on GVFS/MTP mounts, inodes and executable scripts: Unix only.
+#![cfg(unix)]
+
 mod common;
 
 use std::fs;

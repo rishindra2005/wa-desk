@@ -1,8 +1,6 @@
 //! Issue-report bundles: a redacted zip a user can attach to a bug report.
 
-use std::fs::OpenOptions;
 use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
@@ -117,11 +115,7 @@ pub fn export_bundle(
     logs_text.push('\n');
 
     let path = unique_zip_path(paths);
-    let file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&path)?;
+    let file = wa_core::fsx::private_create_new().open(&path)?;
     let mut zip = zip::ZipWriter::new(file);
     let opts = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
@@ -224,12 +218,11 @@ mod tests {
         assert_eq!(issues.len(), 1);
         let sys: Value = serde_json::from_str(&entries[1].1).unwrap();
         assert_eq!(sys["app_version"], "9.9.9");
-        assert_eq!(sys["os"], "linux");
+        assert_eq!(sys["os"], std::env::consts::OS);
         assert_eq!(entries[3].1.lines().count(), 4);
-        let mode = std::os::unix::fs::PermissionsExt::mode(
-            &std::fs::metadata(&zip).unwrap().permissions(),
-        );
-        assert_eq!(mode & 0o777, 0o600);
+        if cfg!(unix) {
+            assert_eq!(wa_core::fsx::unix_mode(&zip).unwrap(), Some(0o600));
+        }
     }
 
     #[test]

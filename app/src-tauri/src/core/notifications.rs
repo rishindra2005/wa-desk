@@ -181,7 +181,7 @@ impl NotificationCenter {
     pub async fn message(&self, chat_jid: &str, title: &str, body: &str, added: u32) {
         let mut st = self.state.lock().await;
         let prev = st.chats.get(chat_jid).and_then(|n| n.message);
-        let (replaces, count) = prev.map_or((0, 0), |(id, c)| (id, c));
+        let (replaces, count) = prev.unwrap_or((0, 0));
         let count = count + added.max(1);
         let note = DesktopNote::new(counted_title(title, count), body);
         let id = self.server.show(&note, replaces).await;

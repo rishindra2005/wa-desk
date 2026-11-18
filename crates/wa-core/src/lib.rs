@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod error;
+pub mod fsx;
 pub mod paths;
 pub mod time;
 pub mod traits;
