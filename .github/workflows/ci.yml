@@ -47,21 +47,25 @@ jobs:
   rust-tests:
     name: Linux · Rust tests + bindings
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
-      # Downloading LibreOffice etc. from the mirrors took up to 50 min, so the .debs
-      # are cached; apt-get still installs them, so their setup scripts run (the
-      # tools need them, e.g. the libblas alternatives link used by ffmpeg).
-      - name: Cache apt archives
-        uses: actions/cache@v4
+      # Downloading LibreOffice etc. from the runner's default mirror took 40-50 min,
+      # so use kernel.org's mirror and cache the .debs. apt-get still installs them,
+      # so package setup scripts run (e.g. the libblas alternative ffmpeg needs).
+      - name: Restore apt archives
+        id: apt-cache
+        uses: actions/cache/restore@v4
         with:
           path: ~/apt-archives
-          key: ${{ runner.os }}-apt-tests-v1-${{ hashFiles('.github/workflows/ci.yml') }}
+          key: ${{ runner.os }}-apt-tests-v2-${{ hashFiles('.github/workflows/ci.yml') }}
           restore-keys: |
-            ${{ runner.os }}-apt-tests-v1-
+            ${{ runner.os }}-apt-tests-v2-
       - name: System dependencies (Tauri + converter tools used by wa-jobs tests)
+        timeout-minutes: 20
         run: |
+          sudo sed -i -E 's#mirror\+file:/etc/apt/apt-mirrors.txt|https?://[a-z0-9.-]*archive\.ubuntu\.com/ubuntu/?#http://mirrors.edge.kernel.org/ubuntu/#g' \
+            /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
           mkdir -p ~/apt-archives/partial
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -69,6 +73,12 @@ jobs:
             $TAURI_LINUX_DEPS ffmpeg ghostscript poppler-utils imagemagick \
             libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui
           sudo chown -R "$USER" ~/apt-archives
+      - name: Save apt archives
+        if: steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/apt-archives
+          key: ${{ runner.os }}-apt-tests-v2-${{ hashFiles('.github/workflows/ci.yml') }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
