@@ -38,6 +38,12 @@ impl Platform for Nop {
     fn main_window_focused(&self) -> bool {
         true
     }
+    fn copy_image(&self, _: wa_desk_lib::core::ClipboardImage) -> Result<()> {
+        Ok(())
+    }
+    fn set_zoom(&self, _: u32) -> Result<()> {
+        Ok(())
+    }
 }
 
 fn ext_of(i: &MediaInfo) -> String {

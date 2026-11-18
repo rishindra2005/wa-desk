@@ -148,6 +148,13 @@ export const copyMessagesText = (chatJid: string, messageIds: string[]) =>
   call<string>("copy_messages_text", { chatJid, messageIds });
 export const refreshChatNames = () => call<number>("refresh_chat_names");
 export const sendMessage = (req: SendReq) => call<SendResult>("send_message", { req });
+/** Write clipboard/dropped bytes (no path) to a private outbox file; returns its absolute path. */
+export const stagePastedFile = (name: string | null, mime: string | null, dataBase64: string) =>
+  call<string>("stage_pasted_file", { name, mime, dataBase64 });
+/** Put a downloaded image message on the system clipboard as image data. */
+export const copyImage = (chatJid: string, messageId: string) => call<void>("copy_image", { chatJid, messageId });
+/** Set (clamped, persisted) app zoom in percent; returns the level now active. */
+export const setZoom = (percent: number) => call<number>("set_zoom", { percent });
 export const react = (req: ReactReq) => call<void>("react", { req });
 export const markRead = (chatJid: string) => call<void>("mark_read", { chatJid });
 export const connectionStatus = () => call<ConnectionState>("connection_status");
@@ -174,7 +181,7 @@ export const COMMANDS = [
   "overview", "list_chats", "get_chat", "get_messages", "get_message_context", "search", "list_media",
   "ensure_media", "preview_doc", "open_media_external", "save_media_as", "open_path", "reveal_path", "get_profile",
   "chat_stats", "list_links", "set_starred", "list_starred", "export_chat", "forward_messages", "copy_messages_text",
-  "refresh_chat_names", "archive_count", "set_archived", "set_pinned", "set_muted", "resync_chat_state", "send_message", "react", "mark_read", "list_calls", "reject_call",
+  "refresh_chat_names", "archive_count", "set_archived", "set_pinned", "set_muted", "resync_chat_state", "send_message", "stage_pasted_file", "copy_image", "set_zoom", "react", "mark_read", "list_calls", "reject_call",
   "connection_status", "reconnect", "start_job", "cancel_job", "list_jobs", "list_rules", "save_rule",
   "delete_rule", "test_rule", "automation_log", "set_automation_enabled", "query_logs", "list_issues",
   "resolve_issue", "clear_resolved_issues", "export_issue_bundle", "get_settings", "set_settings",

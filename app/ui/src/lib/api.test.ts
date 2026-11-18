@@ -76,7 +76,7 @@ describe("commands", () => {
 
   it("lists every contract command once", () => {
     expect(new Set(api.COMMANDS).size).toBe(api.COMMANDS.length);
-    expect(api.COMMANDS.length).toBe(50);
+    expect(api.COMMANDS.length).toBe(53);
   });
 });
 

@@ -17,10 +17,11 @@
 </script>
 
 <script lang="ts">
-  import { ChevronLeft, ChevronRight, X, ZoomIn, ZoomOut, Maximize, ExternalLink } from "@lucide/svelte";
+  import { ChevronLeft, ChevronRight, X, ZoomIn, ZoomOut, Maximize, ExternalLink, Copy } from "@lucide/svelte";
   import { trapFocus } from "./overlay";
   import ConvertMenu from "./ConvertMenu.svelte";
   import { clamp } from "../utils/misc";
+  import { copyImageToClipboard } from "../media";
 
   interface Props {
     items: LightboxItem[];
@@ -72,6 +73,8 @@
     }
   }
   function onKey(e: KeyboardEvent) {
+    // Ctrl/Cmd chords (app zoom, copy) belong to the app, not the viewer.
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === "ArrowLeft") go(-1);
     else if (e.key === "ArrowRight") go(1);
     else if (e.key === "+" || e.key === "=") zoom(1.25);
@@ -122,6 +125,9 @@
     {/if}
     {#if item?.chatJid && item.messageId && (item.kind === "image" || item.kind === "video")}
       <ConvertMenu chatJid={item.chatJid} messageId={item.messageId} kind={item.kind} filename={item.filename ?? null} dark />
+    {/if}
+    {#if item?.chatJid && item.messageId && item.kind !== "video"}
+      <button class="icon-btn text-white/80 hover:bg-white/10 hover:text-white" aria-label="Copy image" data-testid="lightbox-copy" onclick={() => item?.chatJid && item.messageId && void copyImageToClipboard(item.chatJid, item.messageId)}><Copy size={18} /></button>
     {/if}
     {#if onopen && item}
       <button class="icon-btn text-white/80 hover:bg-white/10 hover:text-white" aria-label="Open externally" onclick={() => item && onopen?.(item)}><ExternalLink size={18} /></button>

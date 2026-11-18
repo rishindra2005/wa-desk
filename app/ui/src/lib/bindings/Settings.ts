@@ -17,4 +17,8 @@ confirm_sends: boolean, backfill_days: number, start_hidden: boolean, autostart:
 /**
  * Extra folders searched by the phone-media linker.
  */
-link_extra_dirs: Array<string>, };
+link_extra_dirs: Array<string>, 
+/**
+ * App zoom in percent (50 to 200), applied to the whole window.
+ */
+zoom_percent: number, };

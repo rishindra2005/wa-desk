@@ -76,6 +76,66 @@ pub trait Platform: Send + Sync {
     fn notify(&self, title: &str, body: &str);
     /// Whether the main window is visible and focused.
     fn main_window_focused(&self) -> bool;
+    /// Put a decoded image on the system clipboard (as an image, not a path).
+    fn copy_image(&self, image: ClipboardImage) -> Result<()>;
+    /// Apply the app zoom to the main window (percent, already clamped).
+    fn set_zoom(&self, percent: u32) -> Result<()>;
+}
+
+/// A decoded image ready for the clipboard.
+#[derive(Debug, Clone)]
+pub struct ClipboardImage {
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// Tightly packed RGBA, 8 bits per channel.
+    pub rgba: Vec<u8>,
+}
+
+/// Largest image file we decode for the clipboard.
+const MAX_COPY_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+/// Largest decoded image (pixels) we put on the clipboard.
+const MAX_COPY_IMAGE_PIXELS: u64 = 100_000_000;
+
+/// Decode an already scope-checked image file into RGBA for the clipboard.
+fn decode_clipboard_image(path: &Path) -> Result<ClipboardImage> {
+    let meta = std::fs::metadata(path)?;
+    if !meta.is_file() || meta.len() > MAX_COPY_IMAGE_BYTES {
+        return Err(AppError::invalid("This image is too large to copy"));
+    }
+    let bytes = std::fs::read(path)?;
+    let img = image::load_from_memory(&bytes).map_err(|e| {
+        AppError::invalid("This file is not an image that can be copied").with_detail(e.to_string())
+    })?;
+    if u64::from(img.width()) * u64::from(img.height()) > MAX_COPY_IMAGE_PIXELS {
+        return Err(AppError::invalid("This image is too large to copy"));
+    }
+    let rgba = img.to_rgba8();
+    Ok(ClipboardImage {
+        width: rgba.width(),
+        height: rgba.height(),
+        rgba: rgba.into_raw(),
+    })
+}
+
+/// Pick a file name for a pasted item without one (screenshots have none).
+fn pasted_name(name: Option<&str>, mime: Option<&str>) -> String {
+    let given = name.map(str::trim).filter(|n| !n.is_empty());
+    if let Some(n) = given {
+        return n.to_string();
+    }
+    let ext = match mime.unwrap_or_default() {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        _ => "bin",
+    };
+    format!(
+        "pasted-{}.{ext}",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    )
 }
 
 /// Serialize `payload` and emit it; serialization failures are logged.
@@ -761,6 +821,78 @@ impl AppCore {
         }
     }
 
+    /// `stage_pasted_file`: write clipboard bytes (a screenshot or an image copied
+    /// elsewhere, which have no path) to a private outbox file and return its path.
+    /// The composer then sends it like any chosen file (`send_message` stages again,
+    /// so a retry still has the pasted copy until the outbox cleanup).
+    pub async fn stage_pasted_file(
+        &self,
+        name: Option<String>,
+        mime: Option<String>,
+        data_base64: String,
+    ) -> Result<String> {
+        self.writable()?;
+        use base64::Engine as _;
+        if data_base64.len() > wa_bridge::outbox::MAX_PASTE_BYTES / 3 * 4 + 8 {
+            return Err(AppError::invalid("The pasted item is larger than 50 MiB"));
+        }
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data_base64.trim())
+            .map_err(|_| AppError::invalid("The pasted data is not valid"))?;
+        let name = pasted_name(name.as_deref(), mime.as_deref());
+        let paths = self.paths.clone();
+        let staged =
+            blocking(move || wa_bridge::outbox::stage_bytes(&paths, &name, &bytes)).await?;
+        Ok(staged.to_string_lossy().into_owned())
+    }
+
+    /// `copy_image`: put a downloaded image message on the system clipboard as
+    /// image data. The file goes through `resolve_within` (media roots only, never
+    /// secrets or databases) before it is read.
+    pub async fn copy_image(&self, chat_jid: String, message_id: String) -> Result<()> {
+        let (r, path) = self.local_media(&chat_jid, &message_id).await?;
+        let mime = r.mime.clone().unwrap_or_default();
+        if !(matches!(r.kind, MediaKind::Image | MediaKind::Sticker) || mime.starts_with("image/"))
+        {
+            return Err(AppError::invalid("Only images can be copied"));
+        }
+        let roots = self.paths.media_roots();
+        let image = blocking(move || {
+            let real = wa_core::paths::resolve_within(&path, &roots)?;
+            decode_clipboard_image(&real)
+        })
+        .await?;
+        self.platform.copy_image(image)
+    }
+
+    /// `set_zoom`: clamp, persist in the settings and apply to the window.
+    /// Returns the zoom that is now active.
+    pub async fn set_zoom(&self, percent: u32) -> Result<u32> {
+        let zoom = Settings::clamp_zoom(percent);
+        let db = self.db.clone();
+        blocking(move || {
+            let mut s = db.get_settings()?;
+            if s.zoom_percent != zoom {
+                s.zoom_percent = zoom;
+                db.put_settings(&s)?;
+            }
+            Ok(())
+        })
+        .await?;
+        self.platform.set_zoom(zoom)?;
+        Ok(zoom)
+    }
+
+    /// Apply the saved zoom to the window (startup).
+    pub async fn apply_saved_zoom(&self) -> Result<()> {
+        let s = self.get_settings().await?;
+        let zoom = Settings::clamp_zoom(s.zoom_percent);
+        if zoom != 100 {
+            self.platform.set_zoom(zoom)?;
+        }
+        Ok(())
+    }
+
     /// `react` ("" removes our reaction).
     pub async fn react(&self, req: ReactReq) -> Result<()> {
         self.writable()?;
@@ -1033,9 +1165,11 @@ impl AppCore {
         }
         let db = self.db.clone();
         let engine = self.engine();
-        let s2 = s.clone();
+        let mut s2 = s.clone();
         let old = blocking(move || {
             let old = db.get_settings()?;
+            // The zoom level is owned by `set_zoom`; a stale settings form must not undo it.
+            s2.zoom_percent = Settings::clamp_zoom(old.zoom_percent);
             if s2.automation_enabled && !old.automation_enabled {
                 engine.enable(db.max_rowid()?)?;
             }
@@ -1043,6 +1177,7 @@ impl AppCore {
             Ok(old)
         })
         .await?;
+        s.zoom_percent = Settings::clamp_zoom(old.zoom_percent);
         self.automation_paused
             .store(!s.automation_enabled, Ordering::SeqCst);
         if old.autostart != s.autostart
