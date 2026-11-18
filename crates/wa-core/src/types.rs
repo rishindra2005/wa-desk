@@ -1098,6 +1098,20 @@ pub struct Settings {
     pub autostart: bool,
     /// Extra folders searched by the phone-media linker.
     pub link_extra_dirs: Vec<String>,
+    /// App zoom in percent (50 to 200), applied to the whole window.
+    pub zoom_percent: u32,
+}
+
+impl Settings {
+    /// Lowest allowed app zoom, in percent.
+    pub const ZOOM_MIN: u32 = 50;
+    /// Highest allowed app zoom, in percent.
+    pub const ZOOM_MAX: u32 = 200;
+
+    /// Clamp a zoom request into the allowed range.
+    pub fn clamp_zoom(percent: u32) -> u32 {
+        percent.clamp(Self::ZOOM_MIN, Self::ZOOM_MAX)
+    }
 }
 
 impl Default for Settings {
@@ -1112,6 +1126,7 @@ impl Default for Settings {
             start_hidden: false,
             autostart: false,
             link_extra_dirs: Vec::new(),
+            zoom_percent: 100,
         }
     }
 }

@@ -2,7 +2,7 @@
   import { tick, untrack } from "svelte";
   import {
     ArrowDown, MessageSquareDashed, MoreVertical, X, Copy, Forward, Star, FileDown, Download, Info, Search, ListChecks,
-    Reply, SmilePlus, ExternalLink, Save, Wand2, CornerUpLeft, RefreshCw, StarOff, Phone, Video,
+    Reply, SmilePlus, ExternalLink, Save, Wand2, CornerUpLeft, RefreshCw, StarOff, Phone, Video, Image as ImageIcon,
   } from "@lucide/svelte";
   import * as api from "../../api";
   import type { ChatSummary } from "../../bindings/ChatSummary";
@@ -37,7 +37,7 @@
   import type { MenuItem } from "../../utils/menu";
   import { baseName } from "../../utils/text";
   import { CALL_FROM_PHONE_HINT, direction, pillText, upsertCall } from "../../utils/calls";
-  import { downloadMedia, openExternal, saveMedia } from "../../media";
+  import { copyImageToClipboard, downloadMedia, openExternal, saveMedia } from "../../media";
 
   interface Props {
     chat: ChatSummary;
@@ -447,6 +447,10 @@
   // ------------------------------------------------------------ sending (optimistic)
 
   let seqId = 0;
+  /** Sends run strictly one after another (a batch of files keeps its order). */
+  let sendChain: Promise<void> = Promise.resolve();
+  /** Progress of the current burst of sends (shown when more than one). */
+  let batch = $state({ total: 0, done: 0, failed: 0 });
   function onSend(req: SendReq, quote: Message | null) {
     const p: Pending = { id: `local:${Date.now()}:${seqId++}`, chat: chat.jid, req, ts: Math.floor(Date.now() / 1000), state: "pending", awaiting: false, quote };
     pending = [...pending, p];
@@ -454,27 +458,38 @@
     else {
       void tick().then(() => list?.scrollToBottom());
     }
-    void runSend(p.id);
+    batch.total++;
+    // runSend never rejects, so one failed file does not stop the ones after it.
+    sendChain = sendChain.then(async () => {
+      const ok = await runSend(p.id);
+      batch.done++;
+      if (!ok) batch.failed++;
+      if (batch.done >= batch.total) setTimeout(() => batch.done >= batch.total && (batch = { total: 0, done: 0, failed: 0 }), 1500);
+    });
   }
 
-  async function runSend(id: string) {
+  /** Send one pending message; resolves true when it went out, false when it failed (never rejects). */
+  async function runSend(id: string): Promise<boolean> {
     const upd = (patch: Partial<Pending>) => (pending = pending.map((p) => (p.id === id ? { ...p, ...patch } : p)));
     const p = pending.find((x) => x.id === id);
-    if (!p) return;
+    if (!p) return true;
+    const file = p.req.attachment ? baseName(p.req.attachment) : null;
     upd({ state: "pending", awaiting: false });
     try {
       const res = await api.sendMessage($state.snapshot(p.req));
       if (!res.ok) {
         upd({ state: "failed" });
-        toasts.push({ kind: "error", title: "Not sent", message: res.message });
-        return;
+        toasts.push({ kind: "error", title: file ? `${file} not sent` : "Not sent", message: res.message });
+        return false;
       }
       upd({ awaiting: true });
       refreshNew();
       setTimeout(() => (pending = pending.filter((x) => x.id !== id)), 10_000);
+      return true;
     } catch (e) {
       upd({ state: "failed" });
-      toasts.error(e, "Message not sent");
+      toasts.error(e, file ? `${file} not sent` : "Message not sent");
+      return false;
     }
   }
 
@@ -630,6 +645,7 @@
       items.push({ id: "sep-media", separator: true });
       if (!local) items.push({ id: "download", label: "Download", icon: Download, onselect: () => void downloadMedia(m.chat_jid, m.id).then((r) => r && onMedia(m, r)) });
       else {
+        if (media.kind === "image" || media.kind === "sticker") items.push({ id: "copy-image", label: "Copy image", icon: ImageIcon, onselect: () => void copyImageToClipboard(m.chat_jid, m.id) });
         items.push({ id: "save", label: "Save as…", icon: Save, onselect: () => void saveMedia(m.chat_jid, m.id, media.filename) });
         items.push({ id: "open-ext", label: "Open externally", icon: ExternalLink, onselect: () => void openExternal(m.chat_jid, m.id) });
         items.push({ id: "convert", label: "Convert…", icon: Wand2, onselect: () => (convertMsg = m) });
@@ -821,6 +837,11 @@
     {/if}
   </div>
 
+  {#if batch.total > 1}
+    <div class="border-t border-border bg-surface px-3 py-1 text-xs text-muted" role="status" data-testid="send-progress">
+      {#if batch.done < batch.total}Sending {batch.done + 1} of {batch.total}…{:else}Sent {batch.total - batch.failed} of {batch.total}{batch.failed > 0 ? ` · ${batch.failed} failed (use Retry)` : ""}{/if}
+    </div>
+  {/if}
   <Composer {chat} {replyTo} confirmSends={app.settings?.confirm_sends ?? true} oncancelreply={() => (replyTo = null)} onsend={onSend} />
 </section>
 

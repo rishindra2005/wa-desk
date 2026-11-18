@@ -101,6 +101,14 @@ export class MockBackend {
   readonly rejected: { callId: string; callerJid: string }[] = [];
   /** Finished `export_media_files` calls with the file names written, for assertions in tests. */
   readonly exports: { req: MediaExportReq; files: string[]; summary: MediaExportSummary }[] = [];
+  /** Paths the next multi-file picker returns (consumed once), for tests. */
+  nextPick: string[] | null = null;
+  /** Items written by `stage_pasted_file`, for assertions in tests. */
+  readonly staged: { path: string; name: string; mime: string | null; bytes: number }[] = [];
+  /** Image messages copied to the clipboard by `copy_image`, for assertions in tests. */
+  readonly copiedImages: { chatJid: string; messageId: string }[] = [];
+  /** Every zoom level applied through `set_zoom`. */
+  readonly zooms: number[] = [];
   /** Calls to opener/dialog/notification plugins, for assertions in tests. */
   readonly pluginCalls: { cmd: string; args: unknown }[] = [];
   private emitFn: Emit = () => {};
@@ -137,6 +145,7 @@ export class MockBackend {
       start_hidden: false,
       autostart: false,
       link_extra_dirs: ["/home/user/Pictures/WhatsApp Images"],
+      zoom_percent: 100,
     };
     this.conn = this.connState("connecting", "Connecting to the WhatsApp bridge…");
     setAvatarResolver((jid) => this.avatarFor(jid));
@@ -297,6 +306,32 @@ export class MockBackend {
       }
       case "export_media_files": return this.exportMedia((a as { req: MediaExportReq }).req);
       case "send_message": return this.send((a as { req: SendReq }).req);
+      case "stage_pasted_file": {
+        const { name, mime, dataBase64 } = a as { name: string | null; mime: string | null; dataBase64: string };
+        if (this.readOnly) fail("forbidden", "wa-desk is running in read-only mode");
+        if (!dataBase64) fail("invalid", "the pasted item is empty");
+        const bytes = Math.floor((dataBase64.length * 3) / 4);
+        if (bytes > 50 * 1024 * 1024) fail("invalid", "The pasted item is larger than 50 MiB");
+        const base = baseName(name?.trim() || `pasted-${this.staged.length + 1}.${mime === "image/jpeg" ? "jpg" : (mime?.split("/")[1] ?? "bin")}`);
+        if (base === ".bridge-token" || /\.(db|sqlite3?)$/i.test(base)) fail("forbidden", "refusing to send a secret or database file");
+        const path = `/home/user/.local/share/wa-desk/outbox/${crypto.randomUUID()}/${base}`;
+        this.staged.push({ path, name: base, mime, bytes });
+        return path;
+      }
+      case "copy_image": {
+        const { chatJid, messageId } = a as { chatJid: string; messageId: string };
+        const m = this.message(chatJid, messageId);
+        if (!m.media?.url) fail("not_found", "The file is not available on this computer");
+        if (m.media.kind !== "image" && m.media.kind !== "sticker") fail("invalid", "Only images can be copied");
+        this.copiedImages.push({ chatJid, messageId });
+        return null;
+      }
+      case "set_zoom": {
+        const z = Math.min(200, Math.max(50, Math.round((a as { percent: number }).percent)));
+        this.zooms.push(z);
+        this.settings = { ...this.settings, zoom_percent: z };
+        return z;
+      }
       case "react": return this.react((a as { req: ReactReq }).req);
       case "mark_read": {
         this.chat((a as { chatJid: string }).chatJid).unread = false;
@@ -648,7 +683,7 @@ export class MockBackend {
     const chat = this.chat(req.recipient);
     if (req.attachment && !req.attachment.startsWith("/")) fail("invalid", "Attachment path must be absolute");
     await new Promise((r) => setTimeout(r, 250 / this.opts.speed));
-    if (/\[fail\]/.test(req.text ?? "")) fail("external", "Couldn't reach WhatsApp to send this message");
+    if (/\[fail\]/.test(req.text ?? "") || /\[fail\]/.test(req.attachment ?? "")) fail("external", "Couldn't reach WhatsApp to send this message");
     if (chat.announce && chat.chat_type !== "direct" && !chat.participants.some((p) => p.is_me && p.is_admin)) {
       fail("forbidden", "Only admins can send messages to this group");
     }
@@ -1163,6 +1198,16 @@ export class MockBackend {
     switch (cmd) {
       case "plugin:dialog|open": {
         if (opts.directory) return opts.multiple ? ["/home/user/Pictures/Camera Exports"] : "/home/user/Pictures/Camera Exports";
+        if (this.nextPick && !opts.multiple) {
+          const p = this.nextPick[0] ?? null;
+          this.nextPick = null;
+          return p;
+        }
+        if (this.nextPick && opts.multiple) {
+          const p = this.nextPick;
+          this.nextPick = null;
+          return p;
+        }
         const exts = opts.filters?.flatMap((f) => f.extensions) ?? [];
         const path = exts.includes("docx") ? "/home/user/Documents/Quarterly report.docx"
           : exts.includes("jpg") ? "/home/user/Pictures/holiday.jpg"

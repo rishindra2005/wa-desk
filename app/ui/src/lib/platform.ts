@@ -30,6 +30,17 @@ export async function pickFile(title: string, filters: FileFilter[] = []): Promi
   }
 }
 
+/** Pick several local files; resolves [] when cancelled. */
+export async function pickFiles(title: string, filters: FileFilter[] = []): Promise<string[]> {
+  try {
+    const r = await open({ title, multiple: true, directory: false, ...(filters.length ? { filters } : {}) });
+    if (Array.isArray(r)) return r.filter((p): p is string => typeof p === "string");
+    return typeof r === "string" ? [r] : [];
+  } catch (e) {
+    throw toAppError(e);
+  }
+}
+
 /** Pick a folder; resolves null when cancelled. */
 export async function pickFolder(title: string): Promise<string | null> {
   try {

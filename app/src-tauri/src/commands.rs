@@ -132,6 +132,32 @@ pub async fn send_message(core: Core<'_>, req: SendReq) -> R<SendResult> {
     logged("send_message", core.send_message(req).await)
 }
 
+/// `stage_pasted_file` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn stage_pasted_file(
+    core: Core<'_>,
+    name: Option<String>,
+    mime: Option<String>,
+    data_base64: String,
+) -> R<String> {
+    logged(
+        "stage_pasted_file",
+        core.stage_pasted_file(name, mime, data_base64).await,
+    )
+}
+
+/// `copy_image` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn copy_image(core: Core<'_>, chat_jid: String, message_id: String) -> R<()> {
+    logged("copy_image", core.copy_image(chat_jid, message_id).await)
+}
+
+/// `set_zoom` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn set_zoom(core: Core<'_>, percent: u32) -> R<u32> {
+    logged("set_zoom", core.set_zoom(percent).await)
+}
+
 /// `react` (see docs/CONTRACT.md).
 #[tauri::command]
 pub async fn react(core: Core<'_>, req: ReactReq) -> R<()> {

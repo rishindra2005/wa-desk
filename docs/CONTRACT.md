@@ -41,6 +41,9 @@ Calling conventions:
 | `set_muted` | `{ jid, until: number \| null }` | `void`: epoch seconds; `-1` = always; `null` = unmute |
 | `resync_chat_state` | none | `number`: chats whose archive/pin/mute state changed after a full app-state resync |
 | `send_message` | `{ req: SendReq }` | `SendResult` |
+| `stage_pasted_file` | `{ name: string \| null, mime: string \| null, dataBase64: string }` | `string`: absolute path of a private copy in the outbox (`outbox/<uuid>/<name>`, dir 0700, file 0600). For clipboard or dropped items that have no path (screenshots, images copied in a browser). Up to 50 MiB; a missing name becomes `pasted-<time>.<ext>` from the MIME type; secret/database names are `forbidden`; blocked in read-only mode. The UI then sends the path like any chosen file |
+| `copy_image` | `{ chatJid, messageId }` | `void`: puts the image (decoded pixels, not a path) on the system clipboard. Goes through `resolve_within` on the media roots; `invalid` for non-images, corrupt or oversized (over 64 MiB or 100 MP) files. On Linux it uses GTK's clipboard, which works on both Wayland and X11 |
+| `set_zoom` | `{ percent: number }` | `number`: the zoom now active. Clamped to 50 to 200, saved as `Settings.zoom_percent` and applied to the window (webview zoom). `set_settings` never changes it |
 | `react` | `{ req: ReactReq }` | `void` |
 | `mark_read` | `{ chatJid }` | `void` |
 | `connection_status` | none | `ConnectionState` |
@@ -61,6 +64,8 @@ Calling conventions:
 | `export_issue_bundle` | `{ ids: number[] \| null }` | `string`: path of the zip in the exports folder |
 | `get_settings` | none | `Settings` |
 | `set_settings` | `{ settings: Settings }` | `Settings` |
+
+A message with several attachments is sent by the UI as one `send_message` per file, strictly in order: the typed text is the caption of the first file only (and only the first quotes a reply). A failed file is marked failed with a Retry button and does not stop the others.
 
 The UI picks local files (attachments, convert inputs) and save destinations with `@tauri-apps/plugin-dialog` and passes absolute paths in. The backend validates every path.
 

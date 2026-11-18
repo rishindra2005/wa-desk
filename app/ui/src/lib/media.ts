@@ -45,3 +45,15 @@ export async function openExternal(chatJid: string, messageId: string): Promise<
 export function mediaLabel(m: MediaRef): string {
   return { image: "Photo", video: "Video", audio: "Voice message", document: "Document", sticker: "Sticker" }[m.kind];
 }
+
+/** Put the actual image (not a path) on the system clipboard so it pastes into other apps. */
+export async function copyImageToClipboard(chatJid: string, messageId: string): Promise<boolean> {
+  try {
+    await api.copyImage(chatJid, messageId);
+    toasts.success("Image copied");
+    return true;
+  } catch (e) {
+    toasts.error(e, "Couldn't copy the image");
+    return false;
+  }
+}

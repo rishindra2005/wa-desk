@@ -18,6 +18,9 @@ use wa_core::{AppError, Result};
 /// Largest attachment we stage (WhatsApp's document limit is 2 GiB).
 pub const MAX_STAGE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
+/// Largest clipboard payload (pasted image) we write to the outbox.
+pub const MAX_PASTE_BYTES: usize = 50 * 1024 * 1024;
+
 fn looks_like_db(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     n.ends_with(".db") || n.contains(".db-") || n.ends_with(".sqlite") || n.ends_with(".sqlite3")
@@ -69,6 +72,46 @@ pub fn stage_with_limit(paths: &Paths, src: &Path, max_bytes: u64) -> Result<Pat
         return Err(e);
     }
     tracing::debug!(size = meta.len(), "staged attachment in outbox");
+    Ok(fs::canonicalize(&dest).unwrap_or(dest))
+}
+
+/// Write clipboard bytes (a pasted image or file without a path) to
+/// `outbox/<uuid>/<sanitized name>` (dir 0700, file 0600) and return the path.
+/// Applies the same secret/database refusal as `stage`. Blocking.
+pub fn stage_bytes(paths: &Paths, name: &str, bytes: &[u8]) -> Result<PathBuf> {
+    if bytes.is_empty() {
+        return Err(AppError::invalid("the pasted item is empty"));
+    }
+    if bytes.len() > MAX_PASTE_BYTES {
+        return Err(AppError::invalid("the pasted item is larger than 50 MiB"));
+    }
+    let raw_base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    if SECRET_NAMES.contains(&raw_base) || looks_like_db(raw_base) {
+        return Err(AppError::forbidden(
+            "refusing to send a secret or database file",
+        ));
+    }
+    let name = sanitize_file_name(raw_base);
+    ensure_dir(&paths.outbox)?;
+    let dir = paths.outbox.join(uuid::Uuid::new_v4().to_string());
+    DirBuilder::new().mode(0o700).create(&dir)?;
+    let dest = dir.join(&name);
+    let written = (|| -> Result<()> {
+        let mut out = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&dest)?;
+        io::Write::write_all(&mut out, bytes)?;
+        out.sync_all()?;
+        fs::set_permissions(&dest, fs::Permissions::from_mode(0o600))?;
+        Ok(())
+    })();
+    if let Err(e) = written {
+        let _ = fs::remove_dir_all(&dir);
+        return Err(e);
+    }
+    tracing::debug!(size = bytes.len(), "staged pasted item in outbox");
     Ok(fs::canonicalize(&dest).unwrap_or(dest))
 }
 
@@ -223,6 +266,35 @@ mod tests {
             ErrorKind::Invalid
         );
         assert!(stage_with_limit(&p, &src, 100).is_ok());
+    }
+
+    #[test]
+    fn stage_bytes_writes_private_file() {
+        let (_d, p) = setup();
+        let out = stage_bytes(&p, "image.png", b"\x89PNG").unwrap();
+        assert!(out.starts_with(fs::canonicalize(&p.outbox).unwrap()));
+        assert_eq!(out.file_name().unwrap(), "image.png");
+        assert_eq!(fs::read(&out).unwrap(), b"\x89PNG");
+        let fmode = fs::metadata(&out).unwrap().permissions().mode() & 0o777;
+        assert_eq!(fmode, 0o600);
+        // Path tricks in the name collapse to a single safe component.
+        let out = stage_bytes(&p, "../../etc/passwd", b"x").unwrap();
+        assert_eq!(out.file_name().unwrap(), "passwd");
+        assert!(out.starts_with(fs::canonicalize(&p.outbox).unwrap()));
+    }
+
+    #[test]
+    fn stage_bytes_refuses_bad_input() {
+        let (_d, p) = setup();
+        let k = |n: &str, b: &[u8]| stage_bytes(&p, n, b).unwrap_err().kind;
+        assert_eq!(k("a.png", b""), ErrorKind::Invalid);
+        assert_eq!(k(".bridge-token", b"t"), ErrorKind::Forbidden);
+        assert_eq!(k("messages.db", b"t"), ErrorKind::Forbidden);
+        assert_eq!(k("dir/whatsapp.sqlite", b"t"), ErrorKind::Forbidden);
+        let big = vec![0u8; MAX_PASTE_BYTES + 1];
+        assert_eq!(k("big.bin", &big), ErrorKind::Invalid);
+        let left = fs::read_dir(&p.outbox).map(|r| r.count()).unwrap_or(0);
+        assert_eq!(left, 0, "failures leave nothing behind");
     }
 
     #[test]

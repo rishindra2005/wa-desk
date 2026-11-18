@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const PORT = Number(process.env.WA_E2E_PORT ?? 1420);
+
 // E2E against the Vite dev server with the in-memory mock backend.
 export default defineConfig({
   testDir: "e2e",
@@ -10,14 +12,14 @@ export default defineConfig({
   retries: 0,
   reporter: [["list"]],
   use: {
-    baseURL: "http://127.0.0.1:1420",
+    baseURL: `http://127.0.0.1:${PORT}`,
     viewport: { width: 1320, height: 860 },
     trace: "retain-on-failure",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1320, height: 860 } } }],
   webServer: {
-    command: "npx vite --port 1420 --strictPort --host 127.0.0.1",
-    url: "http://127.0.0.1:1420",
+    command: `npx vite --port ${PORT} --strictPort --host 127.0.0.1`,
+    url: `http://127.0.0.1:${PORT}`,
     reuseExistingServer: true,
     timeout: 60_000,
   },

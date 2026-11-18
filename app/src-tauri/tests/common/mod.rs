@@ -15,7 +15,7 @@ use axum::routing::{get, post};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use wa_core::Result;
-use wa_desk_lib::core::{AppCore, CoreDeps, Emitter, Platform};
+use wa_desk_lib::core::{AppCore, ClipboardImage, CoreDeps, Emitter, Platform};
 use wa_obs::IssueStore;
 use wa_testkit::{Fixture, TOKEN};
 
@@ -303,6 +303,8 @@ pub struct TestPlatform {
     pub autostart: Mutex<Vec<bool>>,
     pub notes: Mutex<Vec<(String, String)>>,
     pub focused: Mutex<bool>,
+    pub copied: Mutex<Vec<(u32, u32)>>,
+    pub zooms: Mutex<Vec<u32>>,
 }
 
 impl Platform for TestPlatform {
@@ -323,6 +325,15 @@ impl Platform for TestPlatform {
     }
     fn main_window_focused(&self) -> bool {
         *self.focused.lock()
+    }
+    fn copy_image(&self, image: ClipboardImage) -> Result<()> {
+        assert_eq!(image.rgba.len(), (image.width * image.height * 4) as usize);
+        self.copied.lock().push((image.width, image.height));
+        Ok(())
+    }
+    fn set_zoom(&self, percent: u32) -> Result<()> {
+        self.zooms.lock().push(percent);
+        Ok(())
     }
 }
 

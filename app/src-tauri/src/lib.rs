@@ -7,6 +7,7 @@
 //! - [`tray`]: tray icon/menu; closing the window hides it to the tray.
 
 pub mod background;
+pub mod clipboard;
 pub mod commands;
 pub mod core;
 pub mod media_url;
@@ -25,7 +26,7 @@ use wa_core::config::Paths;
 use wa_core::{AppError, Result};
 use wa_obs::{IssueStore, LogGuard};
 
-use crate::core::{AppCore, CoreDeps, Emitter, Platform};
+use crate::core::{AppCore, ClipboardImage, CoreDeps, Emitter, Platform};
 
 /// Command-line flag used by autostart to start in the tray.
 pub const HIDDEN_ARG: &str = "--hidden";
@@ -95,6 +96,19 @@ impl Platform for TauriPlatform {
         {
             tracing::debug!(error = %e, "notification failed");
         }
+    }
+
+    fn copy_image(&self, image: ClipboardImage) -> Result<()> {
+        clipboard::copy_image(&self.app, image)
+    }
+
+    fn set_zoom(&self, percent: u32) -> Result<()> {
+        let win = self
+            .app
+            .get_webview_window(tray::MAIN)
+            .ok_or_else(|| AppError::internal("the main window is not available"))?;
+        win.set_zoom(f64::from(percent) / 100.0)
+            .map_err(|e| AppError::external("Could not zoom the window").with_detail(e.to_string()))
     }
 
     fn main_window_focused(&self) -> bool {
@@ -169,6 +183,9 @@ fn setup(
                 tracing::warn!(error = %e, "could not sync autostart");
             }
         }
+    }
+    if let Err(e) = tauri::async_runtime::block_on(core.apply_saved_zoom()) {
+        tracing::warn!(error = %e, "could not apply the saved zoom");
     }
     let hidden = start_hidden_arg || settings.start_hidden;
     if !hidden {
@@ -264,6 +281,9 @@ pub fn run() {
             commands::open_path,
             commands::reveal_path,
             commands::send_message,
+            commands::stage_pasted_file,
+            commands::copy_image,
+            commands::set_zoom,
             commands::react,
             commands::list_calls,
             commands::reject_call,
