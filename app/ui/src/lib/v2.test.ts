@@ -9,7 +9,7 @@ import Avatar from "./components/Avatar.svelte";
 import ContextMenu from "./components/ContextMenu.svelte";
 import ChatList from "./views/chats/ChatList.svelte";
 import { ctxMenu } from "./state/menu.svelte";
-import { avatarFailed, fullAvatarUrl, resetAvatarCache, markAvatarFailed } from "./avatar";
+import { avatarFailed, fullAvatarUrl, resetAvatarCache, markAvatarFailed, AVATAR_RETRY_MS } from "./avatar";
 import { clampPosition, isMenuKey, nextIndex, tidyItems, type MenuItem } from "./utils/menu";
 import { applyClick, inOrder, MAX_FORWARD_TARGETS, rangeIds, toggleTarget } from "./utils/selection";
 import { convertOptions, convertParams } from "./utils/convert";
@@ -86,6 +86,14 @@ describe("avatar", () => {
     render(Avatar, { name: "Dad", id: "d@s.whatsapp.net", url, type: "direct" });
     expect(document.querySelector("img")).toBeNull();
     expect(screen.getByTestId("avatar-initials")).toBeTruthy();
+  });
+
+  it("retries a failed picture after the retry window", () => {
+    markAvatarFailed("x://later", 1_000);
+    expect(avatarFailed("x://later", 1_000 + AVATAR_RETRY_MS - 1)).toBe(true);
+    expect(avatarFailed("x://later", 1_000 + AVATAR_RETRY_MS)).toBe(false);
+    // Forgotten once expired.
+    expect(avatarFailed("x://later", 2_000)).toBe(false);
   });
 
   it("uses a type icon for groups without a picture", () => {

@@ -312,14 +312,17 @@ pub async fn handle(core: &AppCore, req: &Request<Vec<u8>>) -> Response<Vec<u8>>
     let target = match target_for(core, parsed).await {
         Ok(t) => t,
         Err(e) if is_avatar && e.kind == ErrorKind::NotFound => {
-            // Cacheable so the webview does not ask again for every list row.
+            // "No picture" is cacheable so the webview does not ask again for
+            // every list row; a transient failure must not stick.
+            let cache = if e.message == crate::core::NO_PICTURE {
+                format!("private, max-age={CACHE_AVATAR_NONE}")
+            } else {
+                "no-store".to_string()
+            };
             return base(StatusCode::NOT_FOUND, origin)
                 .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-                .header(
-                    header::CACHE_CONTROL,
-                    format!("private, max-age={CACHE_AVATAR_NONE}"),
-                )
-                .body(b"no picture".to_vec())
+                .header(header::CACHE_CONTROL, cache)
+                .body(e.message.clone().into_bytes())
                 .unwrap_or_else(|_| Response::new(Vec::new()));
         }
         Err(e) => return error(&e, origin),

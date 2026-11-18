@@ -11,7 +11,7 @@ Calling conventions:
 | Command | Args (JS) | Returns |
 |---|---|---|
 | `overview` | none | `Overview` |
-| `list_chats` | `{ query: ChatQuery }` | `Page<ChatSummary>` |
+| `list_chats` | `{ query: ChatQuery }` | `Page<ChatSummary>`. Community parents hold no messages of their own: they are listed only with `kind: "community"`, sorted by (and showing the time of) the newest activity in their groups |
 | `get_chat` | `{ jid: string }` | `ChatSummary` |
 | `get_messages` | `{ query: MessagesQuery }` | `Page<Message>`: newest page first, items in **ascending** time order, and `next_cursor` pages **older**. With `after`, returns the next newer page (ascending); `next_cursor` then pages **newer** and is `null` at the newest message |
 | `get_message_context` | `{ chatJid, messageId, radius: number }` | `Message[]` (ascending, includes the target) |
@@ -45,7 +45,7 @@ Calling conventions:
 | `copy_image` | `{ chatJid, messageId }` | `void`: puts the image (decoded pixels, not a path) on the system clipboard. Goes through `resolve_within` on the media roots; `invalid` for non-images, corrupt or oversized (over 64 MiB or 100 MP) files. On Linux it uses GTK's clipboard, which works on both Wayland and X11 |
 | `set_zoom` | `{ percent: number }` | `number`: the zoom now active. Clamped to 50 to 200, saved as `Settings.zoom_percent` and applied to the window (webview zoom). `set_settings` never changes it |
 | `react` | `{ req: ReactReq }` | `void` |
-| `mark_read` | `{ chatJid }` | `void` |
+| `mark_read` | `{ chatJid }` | `void`: the UI calls it when a chat is opened, and again while it is open in a focused window (new messages, window focus). It always withdraws the chat's desktop notifications first, even when the chat is already read, in read-only mode or with the bridge offline |
 | `connection_status` | none | `ConnectionState` |
 | `reconnect` | none | `ConnectionState` |
 | `start_job` | `{ spec: JobSpec }` | `JobRecord` |
@@ -82,6 +82,7 @@ The UI picks local files (attachments, convert inputs) and save destinations wit
 | `call:update` | `CallRecord` | An incoming call started ringing, or its state changed (answered elsewhere, missed, ended) |
 | `media-export:progress` | `MediaExportProgress` | While `export_media_files` runs: `done`/`total` count two passes (resolve/download, then write); the final event has `done == total`. Match on `request_id` |
 | `issue:new` | `Issue` | An issue was recorded for the first time, or reopened |
+| `notification:open` | `NotificationOpenEvent` | The user clicked a desktop notification of `chat_jid`. The backend has already raised the window and withdrawn that chat's other notifications; the UI opens the chat |
 
 ## Media URLs (custom protocol `wa-media`)
 
@@ -90,7 +91,15 @@ The backend returns complete URLs. The UI uses them as-is in `src`/`href`/`fetch
 - `wa-media://localhost/m/<urlenc chat_jid>/<urlenc message_id>`: the original file. Supports HTTP `Range` (video/audio seeking) and sets `Content-Type`.
 - `wa-media://localhost/t/<chat>/<id>`: a 256 px thumbnail, generated on demand (images, video frames, PDF first page). Returns 404 if none is available.
 - `wa-media://localhost/p/<chat>/<id>`: the preview PDF for office documents, cached after `preview_doc`.
-- `wa-media://localhost/a/<urlenc jid>`: profile picture (contact, group, community or channel), cached; 404 when there is none (show initials). Add `?full=1` for the full-size picture.
+- `wa-media://localhost/a/<urlenc jid>`: profile picture (contact, group, community or channel), cached; 404 when there is none (show initials). Add `?full=1` for the full-size picture. A community group without a picture of its own (always the case for the announcement group) gets its community's picture. A 404 for "no picture" is cacheable (`max-age=1800`); a 404 because the bridge is offline, slow or failing is `no-store`, and the UI retries a failed picture after 5 minutes.
 - `wa-media://localhost/x/<urlenc absolute path>`: an exported or converted output file. Only files inside the exports or cache folders are served.
 
 Paths are always resolved, canonicalised and scope-checked in Rust. `.bridge-token` and `*.db*` files are never served.
+
+## Desktop notifications
+
+Message and call notifications are shown by the backend (never by the UI) through the freedesktop notification service on Linux (`org.freedesktop.Notifications` over D-Bus), so that each one has an id that can be replaced and closed:
+- **One per chat.** A newer message replaces the chat's notification (`replaces_id`), whose title then carries the count: "Alice (3 messages)". A poll with new messages in more than 3 chats shows one "N new messages in M chats" summary instead, which accumulates.
+- **Calls.** A ringing call's notification is replaced by the missed-call one, and closed when the call is answered elsewhere, rejected or ends.
+- **Withdrawn** when the chat is opened or marked read here (`mark_read`), when its read marker moves so that it is no longer unread (read on the phone; seen by the watcher), or when one of its notifications is clicked (`notification:open`). The summary closes once all of its chats are read.
+- Without a D-Bus session (or on other platforms) notifications go through `tauri-plugin-notification` and cannot be replaced or withdrawn.

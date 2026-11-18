@@ -115,7 +115,7 @@ async fn group_notifies_only_when_mentioned() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn many_messages_collapse_to_one_notification() {
+async fn many_messages_of_one_chat_collapse_to_one_notification() {
     let h = harness().await;
     prime(&h).await;
     for i in 0..5 {
@@ -128,9 +128,13 @@ async fn many_messages_collapse_to_one_notification() {
         ));
     }
     h.core.watch_tick().await.unwrap();
+    // One notification per chat, carrying the count.
     let notes = h.platform.notes.lock().clone();
     assert_eq!(notes.len(), 1);
-    assert_eq!(notes[0].1, "5 new messages in 1 chats");
+    assert_eq!(
+        notes[0],
+        ("Alice (5 messages)".to_string(), "x".to_string())
+    );
 }
 
 fn ping_rule() -> Rule {

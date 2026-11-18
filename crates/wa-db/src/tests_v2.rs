@@ -234,6 +234,47 @@ fn chat_meta_types_parents_names_and_filters() {
     assert!(names.parent(GROUP_CLASS).is_none());
 }
 
+/// Real community parents hold no messages (`last_message_time` NULL): the
+/// Communities tab still lists them, sorted by their groups' activity, while
+/// the other tabs keep hiding them.
+#[test]
+fn communities_without_messages_list_in_their_tab() {
+    let f = Fixture::standard();
+    meta_table(&f);
+    const OTHER: &str = "120363000000000097@g.us";
+    f.add_chat(COMMUNITY, Some("CSE Batch 2027"), None);
+    f.add_chat(OTHER, Some("Quiet Club"), None);
+    f.add_chat(SUB, Some("CSE Batch 2027"), Some("2026-11-20 08:00:00Z"));
+    add_meta(&f, COMMUNITY, "community", None, Some("CSE Batch 2027"));
+    add_meta(&f, OTHER, "community", None, Some("Quiet Club"));
+    add_meta(&f, SUB, "group", Some(COMMUNITY), Some("CSE Batch 2027"));
+    let db = Db::open(&f.paths).unwrap();
+    let page = db
+        .list_chats(&ChatQuery {
+            kind: ChatKind::Community,
+            ..Default::default()
+        })
+        .unwrap();
+    let jids: Vec<&str> = page.items.iter().map(|c| c.jid.as_str()).collect();
+    assert_eq!(jids, vec![COMMUNITY, OTHER], "active community first");
+    let c = &page.items[0];
+    assert_eq!(c.chat_type, ChatType::Community);
+    assert_eq!(
+        c.last_message_ts,
+        wa_core::time::parse_ts("2026-11-20 08:00:00Z")
+    );
+    assert!(!c.unread);
+    assert!(c.avatar_url.ends_with("120363000000000099%40g.us"));
+    assert_eq!(page.items[1].last_message_ts, None);
+    let all = kinds(&db, ChatKind::All);
+    assert!(all.contains(&SUB.to_string()));
+    assert!(!all.contains(&COMMUNITY.to_string()) && !all.contains(&OTHER.to_string()));
+    assert!(!kinds(&db, ChatKind::Group).contains(&COMMUNITY.to_string()));
+    assert_eq!(db.archive_count().unwrap(), 0);
+    // get_chat works for a parent too (the drawer and palette use it).
+    assert_eq!(db.get_chat(COMMUNITY).unwrap().name, "CSE Batch 2027");
+}
+
 #[test]
 fn own_user_parts_include_lid() {
     let f = Fixture::standard();

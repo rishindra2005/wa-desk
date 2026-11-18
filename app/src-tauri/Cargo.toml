@@ -43,6 +43,7 @@ image.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk.workspace = true
+zbus.workspace = true
 
 [dev-dependencies]
 wa-testkit.workspace = true

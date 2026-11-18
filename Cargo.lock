@@ -5251,6 +5251,7 @@ dependencies = [
  "wa-jobs",
  "wa-obs",
  "wa-testkit",
+ "zbus 5.19.0",
  "zip",
 ]
 

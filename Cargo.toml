@@ -57,6 +57,8 @@ url = "2.5"
 percent-encoding = "2.3"
 mime_guess = "2.0"
 gtk = "0.18"
+# Linux desktop notifications that can be replaced and withdrawn (5.19.0: 2026-08-09).
+zbus = { version = "=5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
 
 [profile.dev.package."*"]
 opt-level = 2

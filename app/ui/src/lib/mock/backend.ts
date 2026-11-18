@@ -111,6 +111,8 @@ export class MockBackend {
   readonly zooms: number[] = [];
   /** Calls to opener/dialog/notification plugins, for assertions in tests. */
   readonly pluginCalls: { cmd: string; args: unknown }[] = [];
+  /** Chats passed to `mark_read`, in order, for assertions in tests. */
+  readonly markedRead: string[] = [];
   private emitFn: Emit = () => {};
   private timers = new Set<ReturnType<typeof setTimeout>>();
   private intervals = new Set<ReturnType<typeof setInterval>>();
@@ -334,6 +336,7 @@ export class MockBackend {
       }
       case "react": return this.react((a as { req: ReactReq }).req);
       case "mark_read": {
+        this.markedRead.push((a as { chatJid: string }).chatJid);
         this.chat((a as { chatJid: string }).chatJid).unread = false;
         return null;
       }
@@ -728,6 +731,11 @@ export class MockBackend {
     this.rowid++;
     this.indexed++;
     this.emit("db:new-messages", { chat_jids: [chat.jid], max_rowid: this.rowid, count: 1 });
+  }
+
+  /** Simulate a click on a chat's desktop notification (exposed for e2e via window.__waMock). */
+  clickNotification(chatJid: string): void {
+    this.emit("notification:open", { chat_jid: chatJid });
   }
 
   /** Simulate an incoming message (exposed for e2e via window.__waMock). */

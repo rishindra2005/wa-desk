@@ -10,13 +10,18 @@ mod chat_state;
 mod export;
 mod forward;
 mod media_export;
+mod notifications;
 mod profile;
 mod warm;
 
 pub use export::{body_text, html_escape, render_html, safe_name, wa_time, whatsapp_lines};
 pub use forward::{FORWARD_MAX_MESSAGES, FORWARD_MAX_TARGETS};
 pub use media_export::{EXPORT_MAX_ITEMS, check_export_dir, unique_name};
-pub use profile::{AVATAR_WAIT, PROFILE_TTL, format_phone};
+pub use notifications::{
+    Activation, DesktopNote, NotificationCenter, NotificationServer, ServerEvent, counted_title,
+    summary_body,
+};
+pub use profile::{AVATAR_WAIT, NO_PICTURE, PICTURE_UNAVAILABLE, PROFILE_TTL, format_phone};
 pub use warm::{UserBusy, WarmState, WarmStats};
 
 use std::collections::{BTreeMap, HashSet};
@@ -38,8 +43,8 @@ use wa_core::types::{
     AutomationEvent, CallMedia, CallQuery, CallRecord, CallResult, ChatQuery, ChatStats,
     ChatSummary, ConnectionState, DbChangedEvent, Issue, JobRecord, JobSpec, LinkItem, LogFilter,
     LogLine, MediaItem, MediaKind, MediaQuery, MediaRef, MediaSource, Message, MessagesQuery,
-    NewMessagesEvent, Overview, Page, PreviewKind, PreviewRef, ReactReq, Rule, RuleEval, SearchHit,
-    SearchQuery, SearchResults, SendReq, SendResult, Settings, events,
+    NewMessagesEvent, NotificationOpenEvent, Overview, Page, PreviewKind, PreviewRef, ReactReq,
+    Rule, RuleEval, SearchHit, SearchQuery, SearchResults, SendReq, SendResult, Settings, events,
 };
 use wa_core::{AppError, ErrorKind, Result};
 use wa_db::Db;
@@ -50,6 +55,8 @@ use wa_obs::IssueStore;
 pub const MAX_TEXT_CHARS: usize = 65_536;
 /// Most message ids sent in one `mark_read`.
 pub const MARK_READ_CAP: usize = 200;
+/// More chats than this in one poll get a single summary notification.
+pub const NOTIFY_MAX_CHATS: usize = 3;
 /// Text previews are offered for files up to this size.
 pub const TEXT_PREVIEW_MAX: u64 = 1024 * 1024;
 /// Staged outbox files older than this are removed by the daily cleanup.
@@ -74,8 +81,8 @@ pub trait Platform: Send + Sync {
     fn reveal_path(&self, path: &Path) -> Result<()>;
     /// Enable/disable launching at login.
     fn set_autostart(&self, enabled: bool) -> Result<()>;
-    /// Show a desktop notification (callers check the user setting).
-    fn notify(&self, title: &str, body: &str);
+    /// Show, un-minimise and focus the main window (a notification was clicked).
+    fn show_main_window(&self);
     /// Whether the main window is visible and focused.
     fn main_window_focused(&self) -> bool;
     /// Put a decoded image on the system clipboard (as an image, not a path).
@@ -173,7 +180,7 @@ fn friendly_bridge(e: AppError, what: &str) -> AppError {
 
 /// Notifier used by the automation engine: honours `desktop_notifications`.
 struct DesktopNotifier {
-    platform: Arc<dyn Platform>,
+    notes: Arc<NotificationCenter>,
     db: Arc<Db>,
 }
 
@@ -184,9 +191,15 @@ impl Notifier for DesktopNotifier {
             .get_settings()
             .map(|s| s.desktop_notifications)
             .unwrap_or(true);
-        if on {
-            self.platform.notify(title, body);
+        if !on {
+            return;
         }
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            tracing::debug!("no runtime for an automation notification");
+            return;
+        };
+        let (notes, note) = (self.notes.clone(), DesktopNote::new(title, body));
+        rt.spawn(async move { notes.other(&note).await });
     }
 }
 
@@ -197,6 +210,8 @@ pub struct CoreDeps {
     pub issues: Arc<IssueStore>,
     pub emitter: Arc<dyn Emitter>,
     pub platform: Arc<dyn Platform>,
+    /// Desktop notification service (D-Bus on Linux, a recorder in tests).
+    pub notifications: Arc<dyn NotificationServer>,
 }
 
 /// Everything the app does, independent of Tauri.
@@ -210,6 +225,7 @@ pub struct AppCore {
     issues: Arc<IssueStore>,
     emitter: Arc<dyn Emitter>,
     platform: Arc<dyn Platform>,
+    notes: Arc<NotificationCenter>,
     automation_paused: AtomicBool,
     read_only: AtomicBool,
     last_bridge: Mutex<Option<ConnectionState>>,
@@ -286,11 +302,12 @@ impl AppCore {
                 .map(|s| !s.automation_enabled)
                 .unwrap_or(false)
         };
+        let notes = Arc::new(NotificationCenter::new(deps.notifications));
         let core = Arc::new(Self {
             engine: RwLock::new(Arc::new(Self::build_engine(
                 &db,
                 &deps.bridge,
-                &deps.platform,
+                &notes,
                 &deps.issues,
                 &deps.paths,
                 me,
@@ -303,6 +320,7 @@ impl AppCore {
             issues: deps.issues,
             emitter: deps.emitter,
             platform: deps.platform,
+            notes,
             automation_paused: AtomicBool::new(paused),
             read_only: AtomicBool::new(false),
             last_bridge: Mutex::new(None),
@@ -316,13 +334,13 @@ impl AppCore {
     fn build_engine(
         db: &Arc<Db>,
         bridge: &Arc<dyn BridgeApi>,
-        platform: &Arc<dyn Platform>,
+        notes: &Arc<NotificationCenter>,
         issues: &Arc<IssueStore>,
         paths: &Paths,
         me: Vec<String>,
     ) -> Engine {
         let notifier = Arc::new(DesktopNotifier {
-            platform: platform.clone(),
+            notes: notes.clone(),
             db: db.clone(),
         });
         Engine::new(db.clone(), bridge.clone(), notifier, me)
@@ -346,7 +364,7 @@ impl AppCore {
         let e = Self::build_engine(
             &self.db,
             &self.bridge,
-            &self.platform,
+            &self.notes,
             &self.issues,
             &self.paths,
             me,
@@ -927,7 +945,10 @@ impl AppCore {
     }
 
     /// `mark_read`: inbound messages newer than the last read marker (≤ 200).
+    /// Opening a chat in the UI calls this too, so the chat's desktop
+    /// notifications are withdrawn first (even when read-only or offline).
     pub async fn mark_read(&self, chat_jid: String) -> Result<()> {
+        self.notes.dismiss_chat(&chat_jid).await;
         self.writable()?;
         let chat = self.get_chat(chat_jid.clone()).await?;
         if !chat.unread {
@@ -1216,8 +1237,9 @@ impl AppCore {
                 },
             );
         }
+        self.dismiss_read_chats(&out.changed_chats).await;
         let settings = self.get_settings().await.unwrap_or_default();
-        self.handle_calls(&out.calls, &settings);
+        self.handle_calls(&out.calls, &settings).await;
         if out.new.is_empty() {
             return Ok(0);
         }
@@ -1253,17 +1275,65 @@ impl AppCore {
         Ok(out.new.len())
     }
 
-    /// Emit `call:update` for each changed call and notify about ringing / missed ones.
-    fn handle_calls(&self, calls: &[CallRecord], settings: &Settings) {
+    /// Emit `call:update` for each changed call and notify about ringing /
+    /// missed ones. A call that stopped ringing withdraws its notification.
+    async fn handle_calls(&self, calls: &[CallRecord], settings: &Settings) {
         for c in calls {
             emit_typed(&*self.emitter, events::CALL_UPDATE, c);
+            let note = call_notification(c);
+            if note.is_none() && !c.is_from_me {
+                self.notes.close_call(&c.chat_jid).await;
+            }
             if !settings.desktop_notifications || self.platform.main_window_focused() {
                 continue;
             }
-            if let Some((title, body)) = call_notification(c) {
-                self.platform.notify(&title, &body);
+            if let Some((title, body)) = note {
+                self.notes
+                    .call(&c.chat_jid, &DesktopNote::new(title, body))
+                    .await;
             }
         }
+    }
+
+    /// Withdraw the notifications of chats that are no longer unread (read
+    /// on the phone or in another client: the read marker moved).
+    async fn dismiss_read_chats(&self, changed: &[String]) {
+        if changed.is_empty() {
+            return;
+        }
+        let active = self.notes.active_chats().await;
+        for jid in changed.iter().filter(|j| active.contains(j)) {
+            match self.get_chat(jid.clone()).await {
+                Ok(c) if !c.unread => {
+                    let n = self.notes.dismiss_chat(jid).await;
+                    tracing::debug!(closed = n, "chat read elsewhere; notifications withdrawn");
+                }
+                Ok(_) => {}
+                Err(e) => tracing::debug!(kind = ?e.kind, "read check for notifications failed"),
+            }
+        }
+    }
+
+    /// A notification server signal (click or close).
+    pub async fn on_notification_event(&self, ev: ServerEvent) {
+        match self.notes.on_event(ev).await {
+            Activation::Unknown => {}
+            Activation::App => self.platform.show_main_window(),
+            Activation::Chat(chat_jid) => {
+                tracing::debug!("notification clicked; opening its chat");
+                self.platform.show_main_window();
+                emit_typed(
+                    &*self.emitter,
+                    events::NOTIFICATION_OPEN,
+                    &NotificationOpenEvent { chat_jid },
+                );
+            }
+        }
+    }
+
+    /// Withdraw every desktop notification of a chat.
+    pub async fn dismiss_notifications(&self, chat_jid: &str) -> usize {
+        self.notes.dismiss_chat(chat_jid).await
     }
 
     async fn notify_new(&self, new: &[IncomingMessage]) {
@@ -1273,23 +1343,30 @@ impl AppCore {
                 .await
                 .unwrap_or_default()
         };
-        let picked: Vec<&IncomingMessage> = new.iter().filter(|m| should_notify(m, &me)).collect();
-        match picked.len() {
-            0 => {}
-            1..=3 => {
-                for m in picked {
-                    let (title, body) = notification_text(m);
-                    self.platform.notify(&title, &body);
-                }
+        // Newest message of each chat and how many arrived, in arrival order.
+        let mut by_chat: Vec<(&IncomingMessage, u32)> = Vec::new();
+        for m in new.iter().filter(|m| should_notify(m, &me)) {
+            match by_chat
+                .iter_mut()
+                .find(|(l, _)| l.message.chat_jid == m.message.chat_jid)
+            {
+                Some(e) => *e = (m, e.1 + 1),
+                None => by_chat.push((m, 1)),
             }
-            n => {
-                let chats: HashSet<&str> =
-                    picked.iter().map(|m| m.message.chat_jid.as_str()).collect();
-                self.platform.notify(
-                    "wa-desk",
-                    &format!("{n} new messages in {} chats", chats.len()),
-                );
+        }
+        if by_chat.len() <= NOTIFY_MAX_CHATS {
+            for (m, n) in by_chat {
+                let (title, body) = notification_text(m);
+                self.notes
+                    .message(&m.message.chat_jid, &title, &body, n)
+                    .await;
             }
+        } else {
+            let counts: Vec<(String, u32)> = by_chat
+                .iter()
+                .map(|(m, n)| (m.message.chat_jid.clone(), *n))
+                .collect();
+            self.notes.summary(&counts).await;
         }
     }
 

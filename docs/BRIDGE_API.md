@@ -53,6 +53,7 @@ These are the differences from the text above. Clients should code against these
 - `/api/avatar` returns `{path, picture_id, cached}`, where `path` is absolute and `cached` is false only when the file was just downloaded.
   - Next to each image the cache keeps a `<file>.id` sidecar and, for "no picture" answers, a `<file>.none` marker.
   - Community pictures are fetched with `IsCommunity` (taken from `chat_meta`). Channel pictures come from `GetNewsletterInfo`.
+  - A community's announcement group has no picture of its own (404 "no picture"); WhatsApp shows the community's picture there, and so does wa-desk, by asking again for the `parent_jid` from `chat_meta`. Community parents have no `messages` rows (`chats.last_message_time` is NULL).
   - An invalid JID returns 400. An upstream failure returns 502, unless a stale cached file exists, in which case that file is served.
   - With no cache entry and no connection, the endpoint returns 503.
 - In `message_receipts`, `chat_jid` uses the same phone-JID form as `messages.chat_jid`, because LID DMs are resolved. Receipts for `status@broadcast` are not stored.

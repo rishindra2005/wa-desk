@@ -11,6 +11,8 @@ pub mod clipboard;
 pub mod commands;
 pub mod core;
 pub mod media_url;
+#[cfg(target_os = "linux")]
+pub mod notify_dbus;
 pub mod protocol;
 pub mod range;
 pub mod tray;
@@ -26,7 +28,10 @@ use wa_core::config::Paths;
 use wa_core::{AppError, Result};
 use wa_obs::{IssueStore, LogGuard};
 
-use crate::core::{AppCore, ClipboardImage, CoreDeps, Emitter, Platform};
+use crate::core::{
+    AppCore, ClipboardImage, CoreDeps, DesktopNote, Emitter, NotificationServer, Platform,
+    ServerEvent,
+};
 
 /// Command-line flag used by autostart to start in the tray.
 pub const HIDDEN_ARG: &str = "--hidden";
@@ -84,18 +89,8 @@ impl Platform for TauriPlatform {
         r.map_err(|e| AppError::external("Could not change autostart").with_detail(e.to_string()))
     }
 
-    fn notify(&self, title: &str, body: &str) {
-        use tauri_plugin_notification::NotificationExt;
-        if let Err(e) = self
-            .app
-            .notification()
-            .builder()
-            .title(title)
-            .body(body)
-            .show()
-        {
-            tracing::debug!(error = %e, "notification failed");
-        }
+    fn show_main_window(&self) {
+        tray::show_main(&self.app);
     }
 
     fn copy_image(&self, image: ClipboardImage) -> Result<()> {
@@ -116,6 +111,49 @@ impl Platform for TauriPlatform {
             .get_webview_window(tray::MAIN)
             .is_some_and(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false))
     }
+}
+
+/// Fallback notifications through `tauri-plugin-notification` (no D-Bus
+/// session): they cannot be tracked, so they are never replaced or withdrawn.
+struct PluginNotifications {
+    app: AppHandle<Wry>,
+}
+
+#[async_trait::async_trait]
+impl NotificationServer for PluginNotifications {
+    async fn show(&self, note: &DesktopNote, _replaces: u32) -> u32 {
+        use tauri_plugin_notification::NotificationExt;
+        if let Err(e) = self
+            .app
+            .notification()
+            .builder()
+            .title(&note.title)
+            .body(&note.body)
+            .show()
+        {
+            tracing::debug!(error = %e, "notification failed");
+        }
+        0
+    }
+
+    async fn close(&self, _id: u32) {}
+}
+
+/// The notification service plus the stream of its click/close signals.
+fn notification_server(
+    app: &AppHandle<Wry>,
+) -> (
+    Arc<dyn NotificationServer>,
+    tokio::sync::mpsc::UnboundedReceiver<ServerEvent>,
+) {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    #[cfg(target_os = "linux")]
+    if let Some(d) = notify_dbus::DbusNotifications::connect(tx) {
+        return (Arc::new(d), rx);
+    }
+    #[cfg(not(target_os = "linux"))]
+    drop(tx);
+    (Arc::new(PluginNotifications { app: app.clone() }), rx)
 }
 
 /// Shared state for shutdown.
@@ -143,6 +181,7 @@ fn setup(
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let handle = app.handle().clone();
     let bridge = Arc::new(wa_bridge::BridgeClient::new(&paths)?);
+    let (notifications, mut note_events) = notification_server(&handle);
     let deps = CoreDeps {
         paths,
         bridge,
@@ -153,6 +192,7 @@ fn setup(
         platform: Arc::new(TauriPlatform {
             app: handle.clone(),
         }),
+        notifications,
     };
     let t0 = std::time::Instant::now();
     let core = tauri::async_runtime::block_on(AppCore::new(deps)).inspect_err(|e| {
@@ -163,6 +203,12 @@ fn setup(
         core.set_read_only(true);
     }
     app.manage(core.clone());
+    let nc = core.clone();
+    tauri::async_runtime::spawn(async move {
+        while let Some(ev) = note_events.recv().await {
+            nc.on_notification_event(ev).await;
+        }
+    });
     let token = app.state::<Shutdown>().token.clone();
     let bg = core.clone();
     tauri::async_runtime::spawn(async move { background::spawn_all(bg, token) });

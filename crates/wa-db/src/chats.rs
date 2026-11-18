@@ -209,12 +209,19 @@ fn candidates(
             Some(m) if is_indexed_chat(&row.jid) => m.get(&row.jid).copied(),
             _ => last_from_bridge(conn, &row.jid)?,
         };
-        if only.is_none() && last.is_none() && row.last_message_time.is_none() {
+        let chat_type = names.chat_type(&row.jid);
+        // Community parents never hold messages; they are kept for the
+        // Communities tab (see `matches`).
+        if only.is_none()
+            && last.is_none()
+            && row.last_message_time.is_none()
+            && chat_type != ChatType::Community
+        {
             continue;
         }
         let sort_ts = last.map(|l| l.ts).or(row.last_message_time);
         out.push(Candidate {
-            chat_type: names.chat_type(&row.jid),
+            chat_type,
             state: chat_state::of(&states, names, &row.jid),
             name: names.chat_name(&row.jid),
             row,
@@ -235,6 +242,14 @@ fn matches(c: &Candidate, q: &ChatQuery) -> bool {
         ChatKind::Broadcast => c.chat_type == ChatType::Broadcast,
     };
     if !ok {
+        return false;
+    }
+    // A community without any activity of its own only shows in its tab.
+    if c.chat_type == ChatType::Community
+        && q.kind != ChatKind::Community
+        && c.sort_ts.is_none()
+        && c.last.is_none()
+    {
         return false;
     }
     if c.state.archived != q.archived {
@@ -313,16 +328,37 @@ fn summarize(
         .collect())
 }
 
+/// A community sorts (and shows its time) by the newest activity of its own
+/// or of any of its groups.
+fn community_activity(cands: &mut [Candidate], names: &NameCache) {
+    let mut latest: HashMap<String, i64> = HashMap::new();
+    for c in cands.iter() {
+        if let (Some(p), Some(ts)) = (names.parent(&c.row.jid), c.sort_ts) {
+            let e = latest.entry(p.jid).or_insert(ts);
+            *e = (*e).max(ts);
+        }
+    }
+    for c in cands
+        .iter_mut()
+        .filter(|c| c.chat_type == ChatType::Community)
+    {
+        if let Some(ts) = latest.get(&c.row.jid) {
+            c.sort_ts = Some(c.sort_ts.map_or(*ts, |s| s.max(*ts)));
+        }
+    }
+}
+
 /// `list_chats`.
 pub(crate) fn list_chats(core: &Core, q: &ChatQuery) -> Result<Page<ChatSummary>> {
     let limit = clamp_limit(q.limit, 100, 500);
     let offset = decode_offset_cursor(q.cursor.as_deref())?;
     let names = core.names.snapshot()?;
     let conn = core.bridge.get()?;
-    let mut cands: Vec<Candidate> = candidates(core, &conn, &names, None)?
-        .into_iter()
-        .filter(|c| matches(c, q))
-        .collect();
+    let mut all = candidates(core, &conn, &names, None)?;
+    if q.kind == ChatKind::Community {
+        community_activity(&mut all, &names);
+    }
+    let mut cands: Vec<Candidate> = all.into_iter().filter(|c| matches(c, q)).collect();
     cands.sort_by(|a, b| {
         b.state
             .pinned

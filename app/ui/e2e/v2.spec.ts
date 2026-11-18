@@ -99,6 +99,8 @@ test.describe("profile drawer", () => {
     const row = page.getByTestId("chat-row").filter({ hasText: "Bengaluru Neighbours" });
     await expect(row).toHaveCount(1);
     await row.click();
+    // A community has no messages of its own: opening it shows its groups.
+    await expect(page.getByTestId("profile-heading")).toHaveText("Community info");
     await page.getByTestId("thread-header").click();
     await expect(page.getByTestId("profile-heading")).toHaveText("Community info");
     await expect(page.getByTestId("badge-announce")).toBeVisible();

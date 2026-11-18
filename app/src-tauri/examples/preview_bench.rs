@@ -18,7 +18,7 @@ use wa_core::Result;
 use wa_core::config::Paths;
 use wa_core::traits::{MediaInfo, MessageStore};
 use wa_core::types::MediaKind;
-use wa_desk_lib::core::{AppCore, CoreDeps, Emitter, Platform};
+use wa_desk_lib::core::{AppCore, CoreDeps, DesktopNote, Emitter, NotificationServer, Platform};
 
 struct Nop;
 impl Emitter for Nop {
@@ -34,7 +34,7 @@ impl Platform for Nop {
     fn set_autostart(&self, _: bool) -> Result<()> {
         Ok(())
     }
-    fn notify(&self, _: &str, _: &str) {}
+    fn show_main_window(&self) {}
     fn main_window_focused(&self) -> bool {
         true
     }
@@ -44,6 +44,14 @@ impl Platform for Nop {
     fn set_zoom(&self, _: u32) -> Result<()> {
         Ok(())
     }
+}
+
+#[async_trait::async_trait]
+impl NotificationServer for Nop {
+    async fn show(&self, _: &DesktopNote, _: u32) -> u32 {
+        0
+    }
+    async fn close(&self, _: u32) {}
 }
 
 fn ext_of(i: &MediaInfo) -> String {
@@ -102,6 +110,7 @@ async fn main() {
         issues: Arc::new(wa_obs::IssueStore::in_memory().expect("issues")),
         emitter: Arc::new(Nop),
         platform: Arc::new(Nop),
+        notifications: Arc::new(Nop),
     })
     .await
     .expect("core");

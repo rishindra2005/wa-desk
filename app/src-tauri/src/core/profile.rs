@@ -38,8 +38,17 @@ pub const AVATAR_FOUND_TTL: Duration = Duration::from_secs(3600);
 #[derive(Debug, Clone)]
 pub(crate) enum AvatarEntry {
     Found(PathBuf, Instant),
+    /// The chat has no picture (until then).
     Missing(Instant),
+    /// The bridge failed or timed out and nothing is cached (retry after).
+    Unavailable(Instant),
 }
+
+/// `NotFound` message for a chat that has no picture (cacheable).
+pub const NO_PICTURE: &str = "no picture";
+/// `NotFound` message when the picture could not be fetched right now
+/// (bridge offline, slow or failing; not cacheable).
+pub const PICTURE_UNAVAILABLE: &str = "picture unavailable";
 
 /// Per-process caches for profiles and avatars.
 #[derive(Default)]
@@ -303,14 +312,48 @@ impl AppCore {
     }
 
     /// Local avatar file for the protocol handler. Never waits on the bridge
-    /// for more than [`AVATAR_WAIT`]; `NotFound` when there is no picture.
+    /// for more than [`AVATAR_WAIT`] per lookup; `NotFound` when there is no
+    /// picture.
+    ///
+    /// A community group without a picture of its own shows its community's
+    /// picture, as WhatsApp does for a community's announcement group (which
+    /// never has one: it carries the community's name and logo).
     pub async fn avatar_file(&self, jid: &str, full: bool) -> Result<PathBuf> {
+        let own = self.own_avatar_file(jid, full).await;
+        match own {
+            Err(e) if e.kind == ErrorKind::NotFound && e.message == NO_PICTURE => {
+                match self.community_of(jid).await {
+                    Some(parent) => self.own_avatar_file(&parent, full).await,
+                    None => Err(e),
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// The community a group belongs to, if any (from the bridge's chat_meta).
+    async fn community_of(&self, jid: &str) -> Option<String> {
+        if ChatType::from_jid(jid) != ChatType::Group {
+            return None;
+        }
+        let (db, j) = (self.db.clone(), jid.to_string());
+        blocking(move || Ok(db.names().snapshot()?.parent(&j).map(|p| p.jid)))
+            .await
+            .ok()
+            .flatten()
+            .filter(|p| p != jid)
+    }
+
+    /// The chat's own picture (see [`Self::avatar_file`]). A definitive "no
+    /// picture" is `NotFound` with [`NO_PICTURE`]; a bridge failure without a
+    /// cached file is `NotFound` with [`PICTURE_UNAVAILABLE`].
+    async fn own_avatar_file(&self, jid: &str, full: bool) -> Result<PathBuf> {
         if matches!(
             ChatType::from_jid(jid),
             ChatType::Status | ChatType::Broadcast
         ) {
             // These never have a picture; don't make the UI wait for the bridge.
-            return Err(AppError::not_found("no picture"));
+            return Err(AppError::not_found(NO_PICTURE));
         }
         let key = (jid.to_string(), full);
         let cached = self.caches.avatars.lock().get(&key).cloned();
@@ -319,7 +362,10 @@ impl AppCore {
                 return Ok(p);
             }
             Some(AvatarEntry::Missing(until)) if Instant::now() < until => {
-                return Err(AppError::not_found("no picture"));
+                return Err(AppError::not_found(NO_PICTURE));
+            }
+            Some(AvatarEntry::Unavailable(until)) if Instant::now() < until => {
+                return Err(AppError::not_found(PICTURE_UNAVAILABLE));
             }
             _ => {}
         }
@@ -331,13 +377,13 @@ impl AppCore {
                     tracing::warn!(error = %e, "bridge avatar path rejected");
                     (
                         AvatarEntry::Missing(Instant::now() + AVATAR_NONE_TTL),
-                        Err(AppError::not_found("no picture")),
+                        Err(AppError::not_found(NO_PICTURE)),
                     )
                 }
             },
-            Ok(Err(e)) if e.kind == ErrorKind::NotFound && e.message.contains("no picture") => (
+            Ok(Err(e)) if e.kind == ErrorKind::NotFound && e.message.contains(NO_PICTURE) => (
                 AvatarEntry::Missing(Instant::now() + AVATAR_NONE_TTL),
-                Err(AppError::not_found("no picture")),
+                Err(AppError::not_found(NO_PICTURE)),
             ),
             other => {
                 // Down, timed out, old bridge: serve a file the bridge cached earlier.
@@ -347,8 +393,8 @@ impl AppCore {
                 match self.disk_avatar(jid, full) {
                     Some(p) => (AvatarEntry::Found(p.clone(), Instant::now()), Ok(p)),
                     None => (
-                        AvatarEntry::Missing(Instant::now() + AVATAR_RETRY),
-                        Err(AppError::not_found("no picture")),
+                        AvatarEntry::Unavailable(Instant::now() + AVATAR_RETRY),
+                        Err(AppError::not_found(PICTURE_UNAVAILABLE)),
                     ),
                 }
             }
