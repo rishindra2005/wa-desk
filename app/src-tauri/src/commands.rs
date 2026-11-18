@@ -10,7 +10,7 @@ use wa_core::types::{
     ExportReq, ForwardReq, Issue, JobRecord, JobSpec, LinkItem, LogFilter, LogLine, MediaExportReq,
     MediaExportSummary, MediaItem, MediaQuery, MediaRef, Message, MessagesQuery, Overview, Page,
     PreviewRef, Profile, ReactReq, Rule, RuleEval, SearchHit, SearchQuery, SearchResults, SendReq,
-    SendResult, Settings,
+    SendResult, Settings, SupervisorStatus,
 };
 
 use crate::core::AppCore;
@@ -409,4 +409,13 @@ pub async fn refresh_chat_names(core: Core<'_>) -> R<u32> {
 #[tauri::command]
 pub async fn export_media_files(core: Core<'_>, req: MediaExportReq) -> R<MediaExportSummary> {
     logged("export_media_files", core.export_media_files(req).await)
+}
+
+/// `bridge_supervisor` (see docs/CONTRACT.md): what the bundled-bridge
+/// supervisor is doing.
+#[tauri::command]
+pub fn bridge_supervisor(
+    sup: State<'_, Arc<crate::bridge_supervisor::Supervisor>>,
+) -> SupervisorStatus {
+    sup.status()
 }

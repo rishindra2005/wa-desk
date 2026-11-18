@@ -90,6 +90,28 @@
           <Toggle bind:checked={draft.desktop_notifications} label="Desktop notifications" description="Notify about new messages and automation activity." />
         </section>
 
+        <section class="card space-y-3 p-5" aria-labelledby="s-bridge">
+          <h2 id="s-bridge" class="text-[15px] font-semibold">WhatsApp bridge</h2>
+          <div class="w-72">
+            <label class="label" for="s-bridge-mode">Bridge mode</label>
+            <select id="s-bridge-mode" class="input" bind:value={draft.bridge_mode} data-testid="settings-bridge-mode">
+              <option value="auto">Automatic (recommended)</option>
+              <option value="external">External: I run the bridge myself</option>
+              <option value="bundled">Bundled: always run the built-in bridge</option>
+            </select>
+          </div>
+          <p class="max-w-prose text-xs text-muted" data-testid="bridge-mode-help">
+            {#if draft.bridge_mode === "external"}
+              wa-desk never starts a bridge. Use this if you run the bridge as your own service.
+            {:else if draft.bridge_mode === "bundled"}
+              wa-desk always starts the bridge that ships with it, and reports an error if the bridge port is already taken.
+            {:else}
+              wa-desk uses a bridge that is already running, and starts the built-in one only when none answers.
+            {/if}
+            Takes effect the next time wa-desk starts.
+          </p>
+        </section>
+
         <section class="card space-y-4 p-5" aria-labelledby="s-send">
           <h2 id="s-send" class="text-[15px] font-semibold">Sending</h2>
           <Toggle bind:checked={draft.confirm_sends} label="Confirm before sending to groups or with attachments" />

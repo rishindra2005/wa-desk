@@ -5,7 +5,8 @@
   import { app } from "../../state/app.svelte";
   import { toasts } from "../../state/toasts.svelte";
   import { timeAgo } from "../../utils/format";
-  import { bridgeTone } from "./bridge";
+  import { bridgeTone, supervisorSummary } from "./bridge";
+  import type { SupervisorStatus } from "../../bindings/SupervisorStatus";
 
   let busy = $state(false);
   let now = $state(Date.now());
@@ -13,6 +14,16 @@
     const t = setInterval(() => (now = Date.now()), 1000);
     return () => clearInterval(t);
   });
+
+  let sup = $state<SupervisorStatus | null>(null);
+  $effect(() => {
+    let alive = true;
+    const load = () => api.bridgeSupervisor().then((s) => { if (alive) sup = s; }).catch(() => {});
+    void load();
+    const t = setInterval(load, 3000);
+    return () => { alive = false; clearInterval(t); };
+  });
+  const supView = $derived(supervisorSummary(sup));
 
   const conn = $derived(app.conn);
   const tone = $derived(bridgeTone(conn?.state));
@@ -41,6 +52,11 @@
       </h2>
       <p class="mt-0.5 text-[13px] text-muted">{conn?.message ?? "Checking…"}</p>
       {#if conn?.last_error}<p class="mt-1 font-mono text-[11px] text-danger">Last error: {conn.last_error}</p>{/if}
+      {#if supView}
+        <p class="mt-1 text-[12px] {supView.bad ? 'text-danger' : 'text-muted'}" data-testid="bridge-supervisor" data-state={sup?.state}>
+          {supView.label}{#if supView.detail}<span class="block font-mono text-[11px]">{supView.detail}</span>{/if}
+        </p>
+      {/if}
       {#if conn}<p class="mt-1 text-[11px] text-faint">Checked {timeAgo(conn.checked_at, now)}</p>{/if}
     </div>
     <button class="btn btn-sm" onclick={reconnect} disabled={busy} data-testid="reconnect">

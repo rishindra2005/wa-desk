@@ -36,6 +36,7 @@ import type { SearchQuery } from "../bindings/SearchQuery";
 import type { SearchResults } from "../bindings/SearchResults";
 import type { SendReq } from "../bindings/SendReq";
 import type { Settings } from "../bindings/Settings";
+import type { SupervisorStatus } from "../bindings/SupervisorStatus";
 import { MAX_PINS, sortChats } from "../utils/chatstate";
 import type { EventMap, EventName } from "../api";
 import type { ChatRef } from "../bindings/ChatRef";
@@ -113,6 +114,8 @@ export class MockBackend {
   readonly pluginCalls: { cmd: string; args: unknown }[] = [];
   /** Chats passed to `mark_read`, in order, for assertions in tests. */
   readonly markedRead: string[] = [];
+  /** What `bridge_supervisor` returns; tests change it to drive the System card. */
+  supervisor: SupervisorStatus = { state: "running", pid: 4242, detail: null, restarts: 0 };
   private emitFn: Emit = () => {};
   private timers = new Set<ReturnType<typeof setTimeout>>();
   private intervals = new Set<ReturnType<typeof setInterval>>();
@@ -148,6 +151,7 @@ export class MockBackend {
       autostart: false,
       link_extra_dirs: ["/home/user/Pictures/WhatsApp Images"],
       zoom_percent: 100,
+      bridge_mode: "auto",
     };
     this.conn = this.connState("connecting", "Connecting to the WhatsApp bridge…");
     setAvatarResolver((jid) => this.avatarFor(jid));
@@ -341,6 +345,7 @@ export class MockBackend {
         return null;
       }
       case "connection_status": return this.conn;
+      case "bridge_supervisor": return this.supervisor;
       case "reconnect": return this.reconnect();
       case "start_job": return this.startJob((a as { spec: JobSpec }).spec);
       case "cancel_job": return this.cancelJob((a as { id: number }).id);

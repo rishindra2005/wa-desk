@@ -1082,6 +1082,59 @@ pub enum Theme {
     Dark,
 }
 
+/// Who runs the WhatsApp bridge (`Settings.bridge_mode`). Read at app start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum BridgeMode {
+    /// Use a bridge that already answers; otherwise start the bundled one.
+    #[default]
+    Auto,
+    /// Never start a bridge; the user runs it.
+    External,
+    /// Always start the bundled bridge (error if the port is taken).
+    Bundled,
+}
+
+/// What the app's bridge supervisor is doing (System view, bridge card).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum SupervisorState {
+    /// Still deciding (app just started).
+    Starting,
+    /// A bridge not started by wa-desk answers on the configured URL.
+    External,
+    /// `bridge_mode = external`: wa-desk never starts a bridge.
+    Disabled,
+    /// No bridge answers and this build has no bundled bridge binary.
+    NotInstalled,
+    /// The bundled bridge is running (`pid`).
+    Running,
+    /// The bundled bridge exited; waiting to restart (`detail` = last error).
+    Crashed,
+    /// Too many fast crashes; wa-desk stopped restarting it.
+    GaveUp,
+    /// It cannot start (for example the port is taken); see `detail`.
+    Error,
+    /// Stopped because the app is quitting.
+    Stopped,
+}
+
+/// Snapshot returned by `bridge_supervisor`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SupervisorStatus {
+    pub state: SupervisorState,
+    /// Process id while `state` is `running`.
+    #[ts(type = "number | null")]
+    pub pid: Option<u32>,
+    /// Last error or explanation, if any.
+    pub detail: Option<String>,
+    /// Restarts since the app started.
+    pub restarts: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Settings {
@@ -1100,6 +1153,8 @@ pub struct Settings {
     pub link_extra_dirs: Vec<String>,
     /// App zoom in percent (50 to 200), applied to the whole window.
     pub zoom_percent: u32,
+    /// Who runs the WhatsApp bridge. Applied at the next app start.
+    pub bridge_mode: BridgeMode,
 }
 
 impl Settings {
@@ -1127,6 +1182,7 @@ impl Default for Settings {
             autostart: false,
             link_extra_dirs: Vec::new(),
             zoom_percent: 100,
+            bridge_mode: BridgeMode::Auto,
         }
     }
 }

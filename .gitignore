@@ -4,3 +4,4 @@ app/ui/dist
 app/src-tauri/gen
 *.log
 /.claude/
+app/src-tauri/binaries/
