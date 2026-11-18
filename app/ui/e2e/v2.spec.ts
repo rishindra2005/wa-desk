@@ -516,7 +516,8 @@ test.describe("pdf and previews", () => {
   });
 
   // Shared 2-core CI runners are much slower than a desktop; keep the strict budget locally.
-  const PREVIEW_BUDGET_MS = process.env.CI ? 3000 : 1000;
+  const onCi = !!(globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.CI;
+  const PREVIEW_BUDGET_MS = onCi ? 3000 : 1000;
 
   test("document and image previews open in under a second", async ({ page }) => {
     await boot(page);
