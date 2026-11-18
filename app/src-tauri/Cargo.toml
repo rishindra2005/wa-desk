@@ -37,12 +37,12 @@ mime_guess.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 wa-testkit.workspace = true
 tempfile.workspace = true
 axum.workspace = true
 rusqlite.workspace = true
-zip.workspace = true
 image.workspace = true
 chrono.workspace = true

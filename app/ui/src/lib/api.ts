@@ -25,6 +25,9 @@ import type { JobSpec } from "./bindings/JobSpec";
 import type { LogFilter } from "./bindings/LogFilter";
 import type { LogLine } from "./bindings/LogLine";
 import type { MediaItem } from "./bindings/MediaItem";
+import type { MediaExportProgress } from "./bindings/MediaExportProgress";
+import type { MediaExportReq } from "./bindings/MediaExportReq";
+import type { MediaExportSummary } from "./bindings/MediaExportSummary";
 import type { MediaQuery } from "./bindings/MediaQuery";
 import type { MediaRef } from "./bindings/MediaRef";
 import type { Message } from "./bindings/Message";
@@ -132,6 +135,7 @@ export const openMediaExternal = (chatJid: string, messageId: string) =>
   call<void>("open_media_external", { chatJid, messageId });
 export const saveMediaAs = (chatJid: string, messageId: string, dest: string) =>
   call<string>("save_media_as", { chatJid, messageId, dest });
+export const exportMediaFiles = (req: MediaExportReq) => call<MediaExportSummary>("export_media_files", { req });
 export const openPath = (path: string) => call<void>("open_path", { path });
 export const revealPath = (path: string) => call<void>("reveal_path", { path });
 export const getProfile = (jid: string) => call<Profile>("get_profile", { jid });
@@ -172,7 +176,7 @@ export const setSettings = (settings: Settings) => call<Settings>("set_settings"
 /** Every command name in the contract (used by tests to check mock coverage). */
 export const COMMANDS = [
   "overview", "list_chats", "get_chat", "get_messages", "get_message_context", "search", "list_media",
-  "ensure_media", "preview_doc", "open_media_external", "save_media_as", "open_path", "reveal_path", "get_profile",
+  "ensure_media", "preview_doc", "open_media_external", "save_media_as", "export_media_files", "open_path", "reveal_path", "get_profile",
   "chat_stats", "list_links", "set_starred", "list_starred", "export_chat", "forward_messages", "copy_messages_text",
   "refresh_chat_names", "archive_count", "set_archived", "set_pinned", "set_muted", "resync_chat_state", "send_message", "react", "mark_read", "list_calls", "reject_call",
   "connection_status", "reconnect", "start_job", "cancel_job", "list_jobs", "list_rules", "save_rule",
@@ -192,10 +196,11 @@ export interface EventMap {
   "automation:fired": AutomationEvent;
   "issue:new": Issue;
   "call:update": CallRecord;
+  "media-export:progress": MediaExportProgress;
 }
 export type EventName = keyof EventMap;
 export const EVENTS: readonly EventName[] = [
-  "db:new-messages", "db:changed", "bridge:state", "job:progress", "job:finished", "automation:fired", "issue:new", "call:update",
+  "db:new-messages", "db:changed", "bridge:state", "job:progress", "job:finished", "automation:fired", "issue:new", "call:update", "media-export:progress",
 ];
 
 /** Subscribe to a backend event with a typed payload. */

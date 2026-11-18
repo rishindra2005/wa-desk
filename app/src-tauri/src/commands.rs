@@ -7,9 +7,10 @@ use tauri::State;
 use wa_core::AppError;
 use wa_core::types::{
     AutomationEvent, CallQuery, CallRecord, ChatQuery, ChatStats, ChatSummary, ConnectionState,
-    ExportReq, ForwardReq, Issue, JobRecord, JobSpec, LinkItem, LogFilter, LogLine, MediaItem,
-    MediaQuery, MediaRef, Message, MessagesQuery, Overview, Page, PreviewRef, Profile, ReactReq,
-    Rule, RuleEval, SearchHit, SearchQuery, SearchResults, SendReq, SendResult, Settings,
+    ExportReq, ForwardReq, Issue, JobRecord, JobSpec, LinkItem, LogFilter, LogLine, MediaExportReq,
+    MediaExportSummary, MediaItem, MediaQuery, MediaRef, Message, MessagesQuery, Overview, Page,
+    PreviewRef, Profile, ReactReq, Rule, RuleEval, SearchHit, SearchQuery, SearchResults, SendReq,
+    SendResult, Settings,
 };
 
 use crate::core::AppCore;
@@ -376,4 +377,10 @@ pub async fn copy_messages_text(
 #[tauri::command]
 pub async fn refresh_chat_names(core: Core<'_>) -> R<u32> {
     logged("refresh_chat_names", core.refresh_chat_names().await)
+}
+
+/// `export_media_files` (see docs/CONTRACT.md).
+#[tauri::command]
+pub async fn export_media_files(core: Core<'_>, req: MediaExportReq) -> R<MediaExportSummary> {
+    logged("export_media_files", core.export_media_files(req).await)
 }

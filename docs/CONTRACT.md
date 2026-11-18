@@ -21,6 +21,7 @@ Calling conventions:
 | `preview_doc` | `{ chatJid, messageId }` | `PreviewRef`: office docs are converted to PDF (cached) |
 | `open_media_external` | `{ chatJid, messageId }` | `void`: opens with the system default app |
 | `save_media_as` | `{ chatJid, messageId, dest: string }` | `string`: the saved path (`dest` comes from the save dialog) |
+| `export_media_files` | `{ req: MediaExportReq }` | `MediaExportSummary`: combined download of up to 500 media/document files. `req.mode = "zip"`: `req.dest` is a `.zip` path from a save dialog (`.zip` is appended when missing); entries are streamed into it, via a `.partial` sibling renamed on success. `"folder"`: `req.dest` is an existing folder from a folder dialog; files keep their original names and are never overwritten. In both modes name collisions become `name (1).ext`, `name (2).ext` (case-insensitive). Sources resolve only through `bridge_media_path` + `resolve_within` (never `.bridge-token`, `*.db*` or anything outside the media roots) and missing media is downloaded first. Destinations inside the bridge store/phone-media/outbox folders are `forbidden`. A per-file problem never fails the call: it is listed in `failures` (`saved + failed` = unique items). Allowed in read-only mode (a local export); media not on disk is then reported as failed. Emits `media-export:progress` |
 | `open_path` | `{ path: string }` | `void`: opens an exported or converted file; only files inside the exports or cache folders (`forbidden` otherwise) |
 | `reveal_path` | `{ path: string }` | `void`: shows that file in the file manager (same scope) |
 | `get_profile` | `{ jid: string }` | `Profile` (contact, group/community, or channel). Live from the bridge with a 10 min cache; falls back to local data when the bridge is down |
@@ -74,6 +75,7 @@ The UI picks local files (attachments, convert inputs) and save destinations wit
 | `job:finished` | `JobRecord` | A job reached a terminal status |
 | `automation:fired` | `AutomationEvent` | A rule matched (dry-run or real) |
 | `call:update` | `CallRecord` | An incoming call started ringing, or its state changed (answered elsewhere, missed, ended) |
+| `media-export:progress` | `MediaExportProgress` | While `export_media_files` runs: `done`/`total` count two passes (resolve/download, then write); the final event has `done == total`. Match on `request_id` |
 | `issue:new` | `Issue` | An issue was recorded for the first time, or reopened |
 
 ## Media URLs (custom protocol `wa-media`)

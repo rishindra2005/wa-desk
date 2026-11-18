@@ -91,7 +91,7 @@ pub fn resolve_within(path: &Path, roots: &[PathBuf]) -> Result<PathBuf> {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or_default();
-    if SECRET_NAMES.contains(&name) || is_db_file(name) {
+    if is_secret_or_db_name(name) {
         return Err(AppError::forbidden(
             "refusing to expose a secret or database file",
         ));
@@ -104,6 +104,11 @@ pub fn resolve_within(path: &Path, roots: &[PathBuf]) -> Result<PathBuf> {
         return Err(AppError::forbidden("path is outside the allowed folders"));
     }
     Ok(real)
+}
+
+/// Whether a file name is a secret (`.bridge-token`) or a database file.
+pub fn is_secret_or_db_name(name: &str) -> bool {
+    SECRET_NAMES.contains(&name) || is_db_file(name)
 }
 
 fn is_db_file(name: &str) -> bool {

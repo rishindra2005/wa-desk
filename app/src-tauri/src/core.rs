@@ -9,11 +9,13 @@
 mod chat_state;
 mod export;
 mod forward;
+mod media_export;
 mod profile;
 mod warm;
 
 pub use export::{body_text, html_escape, render_html, safe_name, wa_time, whatsapp_lines};
 pub use forward::{FORWARD_MAX_MESSAGES, FORWARD_MAX_TARGETS};
+pub use media_export::{EXPORT_MAX_ITEMS, check_export_dir, unique_name};
 pub use profile::{AVATAR_WAIT, PROFILE_TTL, format_phone};
 pub use warm::{UserBusy, WarmState, WarmStats};
 
@@ -337,6 +339,11 @@ impl AppCore {
     /// receipts, downloads and reconnects, and never runs automations.
     pub fn set_read_only(&self, on: bool) {
         self.read_only.store(on, Ordering::SeqCst);
+    }
+
+    /// Whether read-only mode blocks every WhatsApp write.
+    pub fn read_only(&self) -> bool {
+        self.read_only.load(Ordering::SeqCst)
     }
 
     fn writable(&self) -> Result<()> {
