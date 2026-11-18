@@ -12,9 +12,11 @@ use parking_lot::Mutex;
 use wa_core::types::{BridgeMode, SupervisorState};
 use wa_desk_lib::bridge_supervisor::{
     Clock, Config, Decision, Probe, RECHECK_GAP, RestartPolicy, RotatingLog, RunningChild,
-    SpawnSpec, Spawner, StoreLock, Supervisor, SystemctlCheck, Systemd, decide, lock_path,
-    parse_bridge_url,
+    SpawnSpec, Spawner, StoreLock, Supervisor, Systemd, decide, lock_path, parse_bridge_url,
 };
+// The systemd check is only exercised by the unix tests below.
+#[cfg(unix)]
+use wa_desk_lib::bridge_supervisor::SystemctlCheck;
 
 // ---------------------------------------------------------------- decision
 
