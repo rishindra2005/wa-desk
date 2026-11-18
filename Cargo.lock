@@ -5145,7 +5145,7 @@ dependencies = [
 
 [[package]]
 name = "wa-automation"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -5165,7 +5165,7 @@ dependencies = [
 
 [[package]]
 name = "wa-bridge"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -5186,7 +5186,7 @@ dependencies = [
 
 [[package]]
 name = "wa-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5200,7 +5200,7 @@ dependencies = [
 
 [[package]]
 name = "wa-db"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "mime_guess",
@@ -5219,7 +5219,7 @@ dependencies = [
 
 [[package]]
 name = "wa-desk"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -5259,7 +5259,7 @@ dependencies = [
 
 [[package]]
 name = "wa-jobs"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5283,7 +5283,7 @@ dependencies = [
 
 [[package]]
 name = "wa-obs"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "dirs 6.0.0",
@@ -5305,7 +5305,7 @@ dependencies = [
 
 [[package]]
 name = "wa-testkit"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "rusqlite",
