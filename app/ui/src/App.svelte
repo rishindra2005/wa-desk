@@ -23,6 +23,8 @@
   import SettingsView from "./lib/views/settings/SettingsView.svelte";
   import { app, VIEWS } from "./lib/state/app.svelte";
   import { toasts } from "./lib/state/toasts.svelte";
+  import ZoomIndicator from "./lib/shell/ZoomIndicator.svelte";
+  import { zoomActionForKey, zoomActionForWheel } from "./lib/utils/zoom";
 
   toasts.navigate = (v) => app.go(v);
 
@@ -46,6 +48,13 @@
         return;
       }
     }
+    const zoom = zoomActionForKey(e);
+    if (zoom) {
+      // App zoom owns Ctrl+= / + / - / 0 everywhere (WebKitGTK has no built-in zoom keys).
+      e.preventDefault();
+      void app.zoomBy(zoom);
+      return;
+    }
     const mod = e.ctrlKey || e.metaKey;
     if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
       e.preventDefault();
@@ -67,6 +76,23 @@
       }
     }
   }
+
+  // Ctrl+wheel zooms the app (one step per gesture tick; the image viewer keeps its own wheel zoom).
+  let lastWheel = 0;
+  $effect(() => {
+    const onWheel = (e: WheelEvent) => {
+      const dir = zoomActionForWheel(e);
+      if (!dir) return;
+      if ((e.target as HTMLElement | null)?.closest?.("[data-testid='lightbox']")) return;
+      e.preventDefault();
+      const now = Date.now();
+      if (now - lastWheel < 120) return;
+      lastWheel = now;
+      void app.zoomBy(dir);
+    };
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
+  });
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -103,3 +129,4 @@
 {#if app.forwardDialog}<ForwardDialog {...app.forwardDialog} />{/if}
 <ContextMenu />
 <Toasts />
+<ZoomIndicator />

@@ -61,11 +61,15 @@ The search index is built once, in the background. For about 115k messages this 
 | `Esc` | Close the topmost overlay or palette; cancel a reply in the composer |
 | `Enter` / `Shift+Enter` | Send / new line in the composer |
 | `Up` / `Down` | Move through the chat list, palette and pickers |
+| `Ctrl+=` / `Ctrl++` / `Ctrl+Shift+=` / numpad `+`, `Ctrl+-` / numpad `-`, `Ctrl+0` | Zoom the whole app in / out / back to 100% (50% to 200%, browser-like steps; `Ctrl`+mouse wheel works too; remembered across restarts) |
+| `Ctrl+V` | In a chat: attach an image or file from the clipboard (screenshots, images copied in a browser, files copied in the file manager) |
 | `Left` / `Right`, `+` / `-`, `0` | Lightbox: previous/next, zoom in/out, reset zoom |
+
+In the lightbox, plain `+` / `-` / `0` zoom the picture; with `Ctrl` they zoom the app.
 
 `Ctrl+F` and `Alt+n` are ignored while a dialog or lightbox is open. `Cmd` works like `Ctrl`.
 
-- **Chats**: chat list and thread with the newest messages first, older pages on scroll. Reply, react, attach files, mark read. Confirmation before sending to groups or with attachments can be switched off in Settings.
+- **Chats**: chat list and thread with the newest messages first, older pages on scroll. Reply, react, mark read. Attach several files at once (attach button, drag and drop, or paste): a tray lists every file and each can be removed; they are sent one after another, with your text as the caption of the first file, and a failed file gets a Retry without stopping the rest. Right-click an image (or use the viewer's button) for **Copy image**, which puts the picture itself on the clipboard. Confirmation before sending to groups or with attachments can be switched off in Settings.
 - **Search**: full-text search with filters (chat, sender, date). Results jump to the message in context. After a jump, use **Jump to latest** to return to the newest messages.
 - **Media**: grid of photos, video, audio and stickers with thumbnails and a lightbox. Open with the system app or Save as.
 - **Docs**: all documents. PDFs render in-app (page navigation); Office files (docx, xlsx, pptx, odt, ...) are converted to PDF with LibreOffice and cached.

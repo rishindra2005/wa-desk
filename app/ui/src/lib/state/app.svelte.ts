@@ -12,6 +12,7 @@ import { calls } from "./calls.svelte";
 import { debounce } from "../utils/misc";
 import { notify } from "../platform";
 import { resetAvatarCache } from "../avatar";
+import { applyZoomAction, clampZoom, ZOOM_DEFAULT, type ZoomAction } from "../utils/zoom";
 
 export const VIEWS: { id: ViewId; label: string }[] = [
   { id: "chats", label: "Chats" },
@@ -58,6 +59,12 @@ class AppState {
   searchChat = $state<string | null>(null);
   exportDialog = $state<{ chatJid: string; chatName: string; messageIds: string[] } | null>(null);
   forwardDialog = $state<{ chatJid: string; messageIds: string[] } | null>(null);
+  /** App zoom in percent (the window itself is zoomed by the backend). */
+  zoom = $state(ZOOM_DEFAULT);
+  /** Whether the transient zoom indicator is visible. */
+  zoomShown = $state(false);
+  private zoomChain: Promise<void> = Promise.resolve();
+  private zoomTimer: ReturnType<typeof setTimeout> | undefined;
   /** Theme preview before settings load (persisted locally to avoid a flash). */
   localTheme = $state<Theme>("system");
 
@@ -151,6 +158,30 @@ class AppState {
         toasts.error(e, "Couldn't save theme");
       }
     }
+  }
+
+  /** Zoom in/out/reset from a shortcut: apply, persist (backend) and flash the level. */
+  async zoomBy(action: ZoomAction): Promise<void> {
+    const want = applyZoomAction(this.zoom, action);
+    this.zoom = want;
+    this.flashZoom();
+    // Backend calls run one at a time so rapid key repeats persist in order.
+    this.zoomChain = this.zoomChain.then(async () => {
+      try {
+        const got = await api.setZoom(want);
+        if (this.settings) this.settings = { ...this.settings, zoom_percent: got };
+      } catch (e) {
+        this.zoom = this.settings?.zoom_percent ?? ZOOM_DEFAULT;
+        toasts.error(e, "Couldn't change the zoom");
+      }
+    });
+    await this.zoomChain;
+  }
+
+  private flashZoom(): void {
+    this.zoomShown = true;
+    clearTimeout(this.zoomTimer);
+    this.zoomTimer = setTimeout(() => (this.zoomShown = false), 1200);
   }
 
   async refreshOverview(): Promise<void> {
@@ -248,6 +279,9 @@ class AppState {
     if (settings.status === "fulfilled") {
       this.settings = settings.value;
       this.localTheme = settings.value.theme;
+      this.zoom = clampZoom(settings.value.zoom_percent);
+      // The backend applies the saved level at launch; re-assert it in case the window loaded later.
+      if (this.zoom !== ZOOM_DEFAULT) void api.setZoom(this.zoom).catch(() => {});
     } else toasts.error(settings.reason, "Couldn't load settings");
     if (conn.status === "fulfilled") this.conn = conn.value;
     void this.refreshOverview();
