@@ -1087,6 +1087,14 @@ pub struct DbChangedEvent {
     pub chat_jids: Vec<String>,
 }
 
+/// Payload of the `notification:open` event: the user clicked a desktop
+/// notification of this chat (its notifications are already withdrawn).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct NotificationOpenEvent {
+    pub chat_jid: String,
+}
+
 /// Event names (keep in sync with app/ui/src/lib/api.ts).
 pub mod events {
     pub const NEW_MESSAGES: &str = "db:new-messages";
@@ -1098,6 +1106,8 @@ pub mod events {
     pub const ISSUE_NEW: &str = "issue:new";
     /// Payload `CallRecord`: a call started ringing (result in_progress) or changed state.
     pub const CALL_UPDATE: &str = "call:update";
+    /// Payload `NotificationOpenEvent`: a desktop notification was clicked; open its chat.
+    pub const NOTIFICATION_OPEN: &str = "notification:open";
 }
 
 #[cfg(test)]

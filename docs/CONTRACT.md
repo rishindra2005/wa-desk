@@ -41,7 +41,7 @@ Calling conventions:
 | `resync_chat_state` | none | `number`: chats whose archive/pin/mute state changed after a full app-state resync |
 | `send_message` | `{ req: SendReq }` | `SendResult` |
 | `react` | `{ req: ReactReq }` | `void` |
-| `mark_read` | `{ chatJid }` | `void` |
+| `mark_read` | `{ chatJid }` | `void`: the UI calls it when a chat is opened, and again while it is open in a focused window (new messages, window focus). It always withdraws the chat's desktop notifications first, even when the chat is already read, in read-only mode or with the bridge offline |
 | `connection_status` | none | `ConnectionState` |
 | `reconnect` | none | `ConnectionState` |
 | `start_job` | `{ spec: JobSpec }` | `JobRecord` |
@@ -75,6 +75,7 @@ The UI picks local files (attachments, convert inputs) and save destinations wit
 | `automation:fired` | `AutomationEvent` | A rule matched (dry-run or real) |
 | `call:update` | `CallRecord` | An incoming call started ringing, or its state changed (answered elsewhere, missed, ended) |
 | `issue:new` | `Issue` | An issue was recorded for the first time, or reopened |
+| `notification:open` | `NotificationOpenEvent` | The user clicked a desktop notification of `chat_jid`. The backend has already raised the window and withdrawn that chat's other notifications; the UI opens the chat |
 
 ## Media URLs (custom protocol `wa-media`)
 
@@ -87,3 +88,11 @@ The backend returns complete URLs. The UI uses them as-is in `src`/`href`/`fetch
 - `wa-media://localhost/x/<urlenc absolute path>`: an exported or converted output file. Only files inside the exports or cache folders are served.
 
 Paths are always resolved, canonicalised and scope-checked in Rust. `.bridge-token` and `*.db*` files are never served.
+
+## Desktop notifications
+
+Message and call notifications are shown by the backend (never by the UI) through the freedesktop notification service on Linux (`org.freedesktop.Notifications` over D-Bus), so that each one has an id that can be replaced and closed:
+- **One per chat.** A newer message replaces the chat's notification (`replaces_id`), whose title then carries the count: "Alice (3 messages)". A poll with new messages in more than 3 chats shows one "N new messages in M chats" summary instead, which accumulates.
+- **Calls.** A ringing call's notification is replaced by the missed-call one, and closed when the call is answered elsewhere, rejected or ends.
+- **Withdrawn** when the chat is opened or marked read here (`mark_read`), when its read marker moves so that it is no longer unread (read on the phone; seen by the watcher), or when one of its notifications is clicked (`notification:open`). The summary closes once all of its chats are read.
+- Without a D-Bus session (or on other platforms) notifications go through `tauri-plugin-notification` and cannot be replaced or withdrawn.

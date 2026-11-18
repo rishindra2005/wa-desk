@@ -23,6 +23,36 @@
     }
   }
 
+  /**
+   * The open chat is on screen in a focused window: mark it read, like
+   * WhatsApp. The backend skips chats that are already read and withdraws the
+   * chat's desktop notifications either way.
+   */
+  function markOpenRead() {
+    const c = chat;
+    if (!c || app.view !== "chats" || typeof document === "undefined" || !document.hasFocus()) return;
+    listRef?.markLocalRead(c.jid);
+    api.markRead(c.jid).then(
+      () => void app.refreshUnread(),
+      () => {
+        /* non-critical (read-only mode, bridge offline) */
+      },
+    );
+  }
+
+  // Subscriptions only: the callbacks run later, so nothing reactive is read here.
+  $effect(() => {
+    const off = api.subscribe("db:new-messages", (e) => {
+      if (chat && e.chat_jids.includes(chat.jid)) markOpenRead();
+    });
+    const onFocus = () => markOpenRead();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      off();
+      window.removeEventListener("focus", onFocus);
+    };
+  });
+
   function select(c: ChatSummary) {
     app.openChatJid = c.jid;
     wasUnread = c.unread;

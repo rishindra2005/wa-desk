@@ -243,6 +243,12 @@ class AppState {
       }),
       api.subscribe("db:new-messages", () => this.debouncedUnread()),
       api.subscribe("db:changed", () => this.debouncedUnread()),
+      // A desktop notification was clicked: the backend already withdrew that
+      // chat's notifications and raised the window; open the chat (which marks it read).
+      api.subscribe("notification:open", (e) => {
+        this.openChat(e.chat_jid);
+        this.debouncedUnread();
+      }),
     );
     const [settings, conn] = await Promise.allSettled([api.getSettings(), api.connectionStatus()]);
     if (settings.status === "fulfilled") {

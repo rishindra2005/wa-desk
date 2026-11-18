@@ -15,7 +15,7 @@ use axum::routing::{get, post};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use wa_core::Result;
-use wa_desk_lib::core::{AppCore, CoreDeps, Emitter, Platform};
+use wa_desk_lib::core::{AppCore, CoreDeps, DesktopNote, Emitter, NotificationServer, Platform};
 use wa_obs::IssueStore;
 use wa_testkit::{Fixture, TOKEN};
 
@@ -301,8 +301,38 @@ pub struct TestPlatform {
     pub opened: Mutex<Vec<PathBuf>>,
     pub revealed: Mutex<Vec<PathBuf>>,
     pub autostart: Mutex<Vec<bool>>,
+    /// (title, body) of every notification shown or replaced.
     pub notes: Mutex<Vec<(String, String)>>,
+    /// (id, replaces) of every notification shown, in order.
+    pub shown: Mutex<Vec<(u32, u32)>>,
+    /// Ids withdrawn with `close`.
+    pub closed: Mutex<Vec<u32>>,
+    next_id: Mutex<u32>,
     pub focused: Mutex<bool>,
+    /// How often the main window was brought up.
+    pub shown_main: Mutex<u32>,
+}
+
+/// Fake notification server: ids count up from 1; replacing keeps the id.
+#[async_trait::async_trait]
+impl NotificationServer for TestPlatform {
+    async fn show(&self, note: &DesktopNote, replaces: u32) -> u32 {
+        let id = if replaces != 0 {
+            replaces
+        } else {
+            let mut n = self.next_id.lock();
+            *n += 1;
+            *n
+        };
+        self.notes
+            .lock()
+            .push((note.title.clone(), note.body.clone()));
+        self.shown.lock().push((id, replaces));
+        id
+    }
+    async fn close(&self, id: u32) {
+        self.closed.lock().push(id);
+    }
 }
 
 impl Platform for TestPlatform {
@@ -318,8 +348,8 @@ impl Platform for TestPlatform {
         self.autostart.lock().push(enabled);
         Ok(())
     }
-    fn notify(&self, title: &str, body: &str) {
-        self.notes.lock().push((title.into(), body.into()));
+    fn show_main_window(&self) {
+        *self.shown_main.lock() += 1;
     }
     fn main_window_focused(&self) -> bool {
         *self.focused.lock()
@@ -346,6 +376,7 @@ async fn build(mut f: Fixture, url: String, mock: Mock) -> H {
         issues: Arc::new(IssueStore::open(&f.paths).unwrap()),
         emitter: rec.clone(),
         platform: platform.clone(),
+        notifications: platform.clone(),
     })
     .await
     .unwrap();

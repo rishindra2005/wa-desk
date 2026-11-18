@@ -17,6 +17,7 @@ import type { SearchHit } from "./bindings/SearchHit";
 import type { ChatSummary } from "./bindings/ChatSummary";
 import type { ConnectionState } from "./bindings/ConnectionState";
 import type { DbChangedEvent } from "./bindings/DbChangedEvent";
+import type { NotificationOpenEvent } from "./bindings/NotificationOpenEvent";
 import type { ErrorKind } from "./bindings/ErrorKind";
 import type { Issue } from "./bindings/Issue";
 import type { JobProgress } from "./bindings/JobProgress";
@@ -192,10 +193,11 @@ export interface EventMap {
   "automation:fired": AutomationEvent;
   "issue:new": Issue;
   "call:update": CallRecord;
+  "notification:open": NotificationOpenEvent;
 }
 export type EventName = keyof EventMap;
 export const EVENTS: readonly EventName[] = [
-  "db:new-messages", "db:changed", "bridge:state", "job:progress", "job:finished", "automation:fired", "issue:new", "call:update",
+  "db:new-messages", "db:changed", "bridge:state", "job:progress", "job:finished", "automation:fired", "issue:new", "call:update", "notification:open",
 ];
 
 /** Subscribe to a backend event with a typed payload. */
@@ -211,6 +213,7 @@ export const onJobFinished = (cb: (p: JobRecord) => void) => onEvent("job:finish
 export const onAutomationFired = (cb: (p: AutomationEvent) => void) => onEvent("automation:fired", cb);
 export const onIssueNew = (cb: (p: Issue) => void) => onEvent("issue:new", cb);
 export const onCallUpdate = (cb: (p: CallRecord) => void) => onEvent("call:update", cb);
+export const onNotificationOpen = (cb: (p: NotificationOpenEvent) => void) => onEvent("notification:open", cb);
 
 /**
  * Subscribe for the lifetime of the calling component (use inside `$effect`
