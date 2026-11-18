@@ -42,6 +42,9 @@ jobs:
       - name: System dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
+          # The runner's default Ubuntu mirror can be very slow; use kernel.org's.
+          sudo sed -i -E 's#mirror\+file:/etc/apt/apt-mirrors.txt|https?://[a-z0-9.-]*archive\.ubuntu\.com/ubuntu/?#http://mirrors.edge.kernel.org/ubuntu/#g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
@@ -81,5 +84,9 @@ jobs:
             **Requirement:** wa-desk talks to a local WhatsApp bridge (a whatsmeow-based
             service on `127.0.0.1:8080`). Without a bridge running on the same machine the
             app installs and opens but cannot connect to WhatsApp.
+
+            **Windows:** the Windows build is new. It compiles and passes lint in CI,
+            but it has not been tried on a real Windows PC yet, and phone sync (MTP)
+            and withdrawing notifications after you read a chat are Linux-only.
           releaseDraft: false
           prerelease: false
