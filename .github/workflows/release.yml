@@ -60,9 +60,11 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: app/ui/package-lock.json
-      - name: UI dependencies
+      - name: UI dependencies and build
         working-directory: app/ui
-        run: npm ci
+        run: |
+          npm ci
+          npm run build
 
       - name: Build and publish
         uses: tauri-apps/tauri-action@v0
@@ -71,7 +73,9 @@ jobs:
         with:
           projectPath: app
           tauriScript: npx --yes @tauri-apps/cli@2.12.4
-          args: --bundles ${{ matrix.bundles }}
+          # The UI is built above; the release config turns Tauri's own UI build
+          # step into a no-op (it ran from the wrong folder under tauri-action).
+          args: --bundles ${{ matrix.bundles }} --config ${{ github.workspace }}/app/src-tauri/tauri.release.conf.json
           tagName: ${{ env.TAG }}
           releaseName: wa-desk ${{ env.TAG }}
           releaseBody: |
