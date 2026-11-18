@@ -105,5 +105,19 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(page.getByTestId("selection-bar")).toBeVisible();
     await page.mouse.move(1000, 30);
     await page.screenshot({ path: `screenshots/selection-${scheme}.png` });
+    await page.getByTestId("sel-cancel").click();
+
+    // Photo albums in a group, then the combined download dialog.
+    await openChat(page, "Family");
+    await expect(page.getByTestId("album")).toHaveCount(2);
+    await page.mouse.move(1000, 30);
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: `screenshots/album-${scheme}.png` });
+    const bubble = page.locator('[data-testid="message"][data-id="ALBUM-B3"]');
+    await bubble.hover();
+    await bubble.getByTestId("album-download-all").click();
+    await expect(page.getByTestId("export-dialog")).toBeVisible();
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `screenshots/download-dialog-${scheme}.png` });
   });
 }

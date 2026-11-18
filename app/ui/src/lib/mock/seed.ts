@@ -443,6 +443,7 @@ export function generateSeed(nowSec: number = Math.floor(Date.now() / 1000), see
       messages: msgs,
     });
   });
+  seedAlbums(chats);
   finishChats(chats, nowSec);
   seedChatState(chats, nowSec);
 
@@ -696,6 +697,56 @@ function phoneOf(i: number): string {
 
 function formatPhoneLite(d: string): string {
   return d.startsWith("91") && d.length === 12 ? `+91 ${d.slice(2, 7)} ${d.slice(7)}` : `+${d}`;
+}
+
+/**
+ * Photo albums at the end of the "Family" group, so the thread shows them at once:
+ * five photos/videos from one member (the second still on the phone, a caption on the last),
+ * then three of my own (no caption), a text between them keeping the two apart.
+ */
+function seedAlbums(chats: MockChat[]): void {
+  const c = chats.find((x) => x.name.startsWith("Family"));
+  const last = c?.messages[c.messages.length - 1];
+  if (!c || !last) return;
+  const other = [...c.messages].reverse().find((m) => !m.is_from_me && m.sender_jid);
+  if (!other) return;
+  let ts = last.ts + 300;
+  const mk = (id: string, mine: boolean, kind: MediaKind, n: number, available: boolean, caption: string, step = 20): Message => {
+    ts += step;
+    const filename = kind === "video" ? `VID-ALBUM-${n}.mp4` : `IMG-ALBUM-${n}.jpg`;
+    return {
+      id,
+      chat_jid: c.jid,
+      sender_jid: mine ? null : other.sender_jid,
+      sender_name: mine ? "Me" : other.sender_name,
+      is_from_me: mine,
+      ts,
+      content: caption,
+      media: buildMedia(kind, filename, 400_000 + n * 1000, (n * 61) % 360, available),
+      quoted: null,
+      reactions: [],
+      deleted: false,
+      status: mine ? "read" : null,
+      starred: false,
+    };
+  };
+  const theirs: Message[] = [
+    mk("ALBUM-A1", false, "image", 1, true, ""),
+    mk("ALBUM-A2", false, "image", 2, false, ""),
+    mk("ALBUM-A3", false, "video", 3, true, ""),
+    mk("ALBUM-A4", false, "image", 4, true, ""),
+    mk("ALBUM-A5", false, "image", 5, true, "Weekend at the lake 🌅"),
+  ];
+  const chat: Message = {
+    id: "ALBUM-T1", chat_jid: c.jid, sender_jid: null, sender_name: "Me", is_from_me: true, ts: (ts += 200),
+    content: "These are lovely!", media: null, quoted: null, reactions: [], deleted: false, status: "read", starred: false,
+  };
+  const mine: Message[] = [
+    mk("ALBUM-B1", true, "image", 6, true, "", 200),
+    mk("ALBUM-B2", true, "image", 7, true, ""),
+    mk("ALBUM-B3", true, "image", 8, true, ""),
+  ];
+  c.messages.push(...theirs, chat, ...mine);
 }
 
 /** Archived / pinned / muted examples (one mute is already expired). */

@@ -18,6 +18,7 @@
   import ErrorPanel from "../../components/ErrorPanel.svelte";
   import EmptyState from "../../components/EmptyState.svelte";
   import Lightbox, { type LightboxItem } from "../../components/Lightbox.svelte";
+  import ExportMediaDialog, { type ExportItems } from "../../components/ExportMediaDialog.svelte";
   import Modal from "../../components/Modal.svelte";
   import DocPreview from "../../components/DocPreview.svelte";
   import ConvertMenu from "../../components/ConvertMenu.svelte";
@@ -31,12 +32,12 @@
   import { chatState } from "../../state/chatstate.svelte";
   import { overlayCount } from "../../components/overlay";
   import { debounce, copyText } from "../../utils/misc";
-  import { applyClick, inOrder } from "../../utils/selection";
+  import { applyClick, inOrder, toggleGroup } from "../../utils/selection";
+  import { groupAlbums } from "../../utils/albums";
   import type { MenuItem } from "../../utils/menu";
   import { baseName } from "../../utils/text";
   import { CALL_FROM_PHONE_HINT, direction, pillText, upsertCall } from "../../utils/calls";
   import { downloadMedia, openExternal, saveMedia } from "../../media";
-  import { pickFolder } from "../../platform";
 
   interface Props {
     chat: ChatSummary;
@@ -53,7 +54,7 @@
     | { kind: "day"; key: string; label: string }
     | { kind: "unread"; key: string; label: string }
     | { kind: "call"; key: string; c: CallRecord }
-    | { kind: "msg"; key: string; m: Message; first: boolean; showName: boolean; local: boolean };
+    | { kind: "msg"; key: string; m: Message; album: Message[] | null; first: boolean; showName: boolean; local: boolean };
 
   interface Pending {
     id: string;
@@ -87,6 +88,7 @@
   let previewMsg = $state<Message | null>(null);
   let convertMsg = $state<Message | null>(null);
   let infoMsg = $state<Message | null>(null);
+  let exportItems = $state<ExportItems | null>(null);
   let pending = $state<Pending[]>([]);
   let loadSeq = 0;
   let selecting = $state(false);
@@ -133,7 +135,7 @@
     let lastDay = "";
     const now = Date.now();
     let unreadShown = false;
-    let idx = -1;
+    let idx = 0;
     const cl = visibleCalls;
     let ci = 0;
     const day = (ts: number) => {
@@ -151,27 +153,58 @@
         prev = null;
       }
     };
-    for (const m of allMessages) {
-      idx++;
-      flushCalls(m.ts - 1);
-      const newDay = day(m.ts);
-      if (!unreadShown && unreadFromId === m.id) {
+    // Photos/videos sent together become one album row; day changes, the unread
+    // divider, calls and local (unsent) bubbles always start a new group.
+    const callTimes = cl.map((c) => c.ts);
+    const groups = groupAlbums(allMessages, {
+      breakBefore: (m, p) =>
+        dayKey(m.ts) !== dayKey(p.ts) || m.id === unreadFromId || pendingById.has(m.id) || callTimes.some((t) => t > p.ts - 1 && t <= m.ts - 1),
+    });
+    for (const grp of groups) {
+      const album = Array.isArray(grp) ? grp : null;
+      const first = (album ? album[0] : grp) as Message;
+      const m = (album ? album[album.length - 1] : grp) as Message;
+      flushCalls(first.ts - 1);
+      const newDay = day(first.ts);
+      if (!unreadShown && unreadFromId === first.id) {
         unreadShown = true;
         const n = allMessages.slice(idx).filter((x) => !x.is_from_me).length;
         out.push({ kind: "unread", key: "unread", label: `${n} unread message${n === 1 ? "" : "s"}` });
       }
       const sameSender =
-        !!prev && !newDay && prev.is_from_me === m.is_from_me && prev.sender_jid === m.sender_jid && m.ts - prev.ts < 300 && !(unreadShown && unreadFromId === m.id);
-      out.push({ kind: "msg", key: m.id, m, first: !sameSender, showName: !sameSender, local: pendingById.has(m.id) });
+        !!prev && !newDay && prev.is_from_me === first.is_from_me && prev.sender_jid === first.sender_jid && first.ts - prev.ts < 300 && !(unreadShown && unreadFromId === first.id);
+      out.push({ kind: "msg", key: album ? `album:${first.id}` : first.id, m, album, first: !sameSender, showName: !sameSender, local: pendingById.has(first.id) });
+      idx += album ? album.length : 1;
       prev = m;
     }
     flushCalls(Infinity);
     return out;
   });
 
+  /** Row key for any message id (album items share their album's row). */
+  const rowKeyById = $derived.by(() => {
+    const map = new Map<string, string>();
+    for (const r of rows) if (r.kind === "msg" && r.album) for (const x of r.album) map.set(x.id, r.key);
+    return map;
+  });
+  const albumsByAnchor = $derived.by(() => {
+    const map = new Map<string, string[]>();
+    for (const r of rows) if (r.kind === "msg" && r.album) map.set(r.m.id, r.album.map((x) => x.id));
+    return map;
+  });
+
   function estimate(r: Row): number {
     if (r.kind === "day" || r.kind === "unread" || r.kind === "call") return 40;
     const m = r.m;
+    if (r.album) {
+      // padding + grid (144 for a pair, else 288) + caption/time line + sender name, reactions, quote.
+      let h = (r.first ? 8 : 2) + 12 + (r.album.length === 2 ? 144 : 288);
+      h += m.content ? 20 + Math.floor(m.content.length / 60) * 19 : 14;
+      if (isGroupChat && r.showName && !m.is_from_me) h += 20;
+      if (m.quoted) h += 48;
+      if (r.album.some((x) => x.reactions.length)) h += 22;
+      return h;
+    }
     let h = r.first ? 44 : 38;
     if (m.media) h += m.media.kind === "audio" ? 44 : m.media.kind === "document" ? 90 : m.media.kind === "sticker" ? 130 : 230;
     if (m.quoted) h += 48;
@@ -258,7 +291,7 @@
   async function jumpTo(id: string) {
     if (messages.some((m) => m.id === id)) {
       await tick();
-      list?.scrollToKey(id, "center");
+      list?.scrollToKey(rowKeyById.get(id) ?? id, "center");
       flash(id);
       return;
     }
@@ -271,7 +304,7 @@
       detached = true;
       loading = false;
       await tick();
-      list?.scrollToKey(id, "center");
+      list?.scrollToKey(rowKeyById.get(id) ?? id, "center");
       flash(id);
     } catch (e) {
       toasts.error(e, "Couldn't find that message");
@@ -494,8 +527,9 @@
     }
   }
 
-  function openViewer(m: Message) {
-    const items: LightboxItem[] = messages
+  function openViewer(m: Message, album?: Message[]) {
+    const source = album ? album : messages;
+    const items: LightboxItem[] = source
       .filter((x) => x.media && x.media.url && (x.media.kind === "image" || x.media.kind === "video") && !x.deleted)
       .map((x) => ({
         key: x.id,
@@ -513,28 +547,18 @@
     lightbox = { items, index };
   }
 
-  async function downloadSelected() {
-    const targets = messages.filter((m) => selected.has(m.id) && m.media);
+  /** Offer "Save as ZIP" / "Save files to folder" for these messages' media (missing files are fetched first). */
+  function downloadMessages(ms: Message[]) {
+    const targets = ms.filter((m) => m.media && !m.deleted).map((m) => ({ chat_jid: m.chat_jid, message_id: m.id }));
     if (targets.length === 0) return toasts.push({ kind: "info", title: "No media in the selection" });
-    try {
-      const dir = await pickFolder("Save media to");
-      if (!dir) return;
-      let ok = 0;
-      for (const m of targets) {
-        let ref = m.media as MediaRef;
-        if (!ref.url) {
-          const got = await downloadMedia(m.chat_jid, m.id);
-          if (!got) continue;
-          ref = got;
-          onMedia(m, got);
-        }
-        await api.saveMediaAs(m.chat_jid, m.id, `${dir}/${ref.filename ?? m.id}`);
-        ok++;
-      }
-      toasts.success(`Saved ${ok} of ${targets.length} file${targets.length === 1 ? "" : "s"}`, dir);
-    } catch (e) {
-      toasts.error(e, "Couldn't save media");
-    }
+    exportItems = { targets, label: title };
+  }
+  function downloadSelected() {
+    downloadMessages(messages.filter((m) => selected.has(m.id)));
+  }
+  function onExported() {
+    // Files fetched by the export are now local: re-read the loaded pages.
+    refreshChanged();
   }
 
   // ------------------------------------------------------------ selection
@@ -552,6 +576,12 @@
     anchor = null;
   }
   function onSelect(m: Message, e: MouseEvent | KeyboardEvent) {
+    const group = albumsByAnchor.get(m.id);
+    if (group && !e.shiftKey) {
+      selected = toggleGroup(selected, group);
+      anchor = m.id;
+      return;
+    }
     const r = applyClick(selected, orderedIds, anchor, m.id, e.shiftKey);
     selected = r.selected;
     anchor = r.anchor;
@@ -609,6 +639,30 @@
     items.push({ id: "info", label: "Message info", icon: Info, onselect: () => (infoMsg = m) });
     if (m.quoted) items.push({ id: "jump", label: "Jump to quoted", icon: CornerUpLeft, onselect: () => m.quoted && void jumpTo(m.quoted.id) });
     return items;
+  }
+
+  /** Menu for a whole album: reply/react/copy on its caption message plus album-wide actions. */
+  function albumMenuFor(items: Message[]): MenuItem[] {
+    const last = items[items.length - 1] as Message;
+    const keep = menuFor(last).filter((i) => ["reply", "react", "copy", "sep-info", "info"].includes(i.id));
+    const ids = items.map((x) => x.id);
+    const allStar = items.every((x) => x.starred);
+    const head = keep.filter((i) => i.id !== "sep-info" && i.id !== "info");
+    return [
+      ...head,
+      { id: "select", label: "Select album", icon: ListChecks, onselect: () => startSelectGroup(ids) },
+      { id: "forward", label: "Forward album…", icon: Forward, onselect: () => app.openForward(chat.jid, ids) },
+      { id: "star", label: allStar ? "Unstar album" : "Star album", icon: allStar ? StarOff : Star, onselect: () => void setStar(ids, !allStar) },
+      { id: "sep-album", separator: true },
+      { id: "download-all", label: `Download all (${items.length})…`, icon: Download, onselect: () => downloadMessages(items) },
+      ...keep.filter((i) => i.id === "sep-info" || i.id === "info"),
+    ];
+  }
+
+  function startSelectGroup(ids: string[]) {
+    selecting = true;
+    selected = new Set(ids);
+    anchor = ids[ids.length - 1] ?? null;
   }
 
   function headerItems(): MenuItem[] {
@@ -725,16 +779,19 @@
           {:else}
             <MessageBubble
               m={r.m}
+              album={r.album}
               isGroup={isGroupChat}
               showName={r.showName}
               first={r.first}
-              highlighted={highlightId === r.m.id}
+              highlighted={highlightId !== null && (r.album ? r.album.some((x) => x.id === highlightId) : highlightId === r.m.id)}
               tick={tickFor(r.m)}
               local={r.local}
               selecting={selecting && !r.local}
-              selected={selected.has(r.m.id)}
+              selected={r.album ? r.album.every((x) => selected.has(x.id)) : selected.has(r.m.id)}
               reactRequest={reactReq?.id === r.m.id ? reactReq.nonce : 0}
               menuItems={menuFor}
+              albumMenu={albumMenuFor}
+              ondownloadall={downloadMessages}
               onreact={onReact}
               onreply={(m) => (replyTo = m)}
               onjump={(id) => void jumpTo(id)}
@@ -769,6 +826,10 @@
 
 {#if lightbox}
   <Lightbox items={lightbox.items} bind:index={lightbox.index} onclose={() => (lightbox = null)} />
+{/if}
+
+{#if exportItems}
+  <ExportMediaDialog items={exportItems} onclose={() => (exportItems = null)} ondone={onExported} />
 {/if}
 
 {#if previewMsg?.media}

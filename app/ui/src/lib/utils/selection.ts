@@ -31,6 +31,14 @@ export function applyClick(
   return { selected: next, anchor: id };
 }
 
+/** Toggle a whole group (an album) at once: deselect all when every id is selected, else select all. */
+export function toggleGroup(current: ReadonlySet<string>, ids: readonly string[]): Set<string> {
+  const next = new Set(current);
+  if (ids.length > 0 && ids.every((i) => next.has(i))) for (const i of ids) next.delete(i);
+  else for (const i of ids) next.add(i);
+  return next;
+}
+
 export const MAX_FORWARD_TARGETS = 5;
 
 /** Toggle a forward target; refuses to exceed `max` (returns `limited: true`). */

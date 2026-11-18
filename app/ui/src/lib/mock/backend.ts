@@ -18,6 +18,9 @@ import type { JobSpec } from "../bindings/JobSpec";
 import type { LogFilter } from "../bindings/LogFilter";
 import type { LogLevel } from "../bindings/LogLevel";
 import type { LogLine } from "../bindings/LogLine";
+import type { MediaExportFailure } from "../bindings/MediaExportFailure";
+import type { MediaExportReq } from "../bindings/MediaExportReq";
+import type { MediaExportSummary } from "../bindings/MediaExportSummary";
 import type { MediaItem } from "../bindings/MediaItem";
 import type { MediaQuery } from "../bindings/MediaQuery";
 import type { MediaRef } from "../bindings/MediaRef";
@@ -96,6 +99,8 @@ export class MockBackend {
   readOnly = false;
   /** Calls declined through `reject_call`, for assertions in tests. */
   readonly rejected: { callId: string; callerJid: string }[] = [];
+  /** Finished `export_media_files` calls with the file names written, for assertions in tests. */
+  readonly exports: { req: MediaExportReq; files: string[]; summary: MediaExportSummary }[] = [];
   /** Calls to opener/dialog/notification plugins, for assertions in tests. */
   readonly pluginCalls: { cmd: string; args: unknown }[] = [];
   private emitFn: Emit = () => {};
@@ -290,6 +295,7 @@ export class MockBackend {
         if (!dest.startsWith("/")) fail("invalid", "Destination must be an absolute path");
         return dest;
       }
+      case "export_media_files": return this.exportMedia((a as { req: MediaExportReq }).req);
       case "send_message": return this.send((a as { req: SendReq }).req);
       case "react": return this.react((a as { req: ReactReq }).req);
       case "mark_read": {
@@ -570,6 +576,50 @@ export class MockBackend {
     m.media = { ...buildMedia(m.media.kind, m.media.filename ?? "file", m.media.size ?? 0, hue, true), source: "store" };
     this.emit("db:changed", { chat_jids: [chatJid] });
     return m.media;
+  }
+
+  /** `export_media_files`: validates like the backend, fetches missing media (not in read-only mode) and reports a summary. */
+  async exportMedia(req: MediaExportReq): Promise<MediaExportSummary> {
+    if (!req.request_id) fail("invalid", "missing request id");
+    if (req.items.length === 0) fail("invalid", "Select at least one file");
+    if (req.items.length > 500) fail("invalid", "You can export at most 500 files at a time");
+    if (!req.dest.startsWith("/")) fail("invalid", "Choose an absolute destination");
+    if (req.mode === "zip" && /(^|\/)\.bridge-token$|\.db($|-)|\.sqlite3?$/.test(req.dest)) fail("forbidden", "Refusing to write a database or secret file");
+    // Repeated ids are exported once, like the backend.
+    const seen = new Set<string>();
+    const items = req.items.filter((it) => !seen.has(`${it.chat_jid}/${it.message_id}`) && !!seen.add(`${it.chat_jid}/${it.message_id}`));
+    const total = items.length * 2;
+    const failures: MediaExportFailure[] = [];
+    const files: string[] = [];
+    const used = new Set<string>();
+    let done = 0;
+    for (const it of items) {
+      this.emit("media-export:progress", { request_id: req.request_id, done: done++, total, current: null });
+      try {
+        const m = this.message(it.chat_jid, it.message_id);
+        if (!m.media) throw new Error("This message has no media");
+        if (!m.media.url) {
+          if (this.readOnly) throw new Error("Not downloaded, and wa-desk is in read-only mode so it cannot be fetched");
+          await this.ensureMedia(it.chat_jid, it.message_id);
+        }
+        const name = uniqueName(used, baseName(m.media.filename ?? it.message_id));
+        files.push(name);
+        this.emit("media-export:progress", { request_id: req.request_id, done: done + items.length - 1, total, current: name });
+      } catch (e) {
+        const reason = e instanceof MockFail ? e.err.message : e instanceof Error ? e.message : String(e);
+        failures.push({ chat_jid: it.chat_jid, message_id: it.message_id, reason });
+      }
+    }
+    const summary: MediaExportSummary = {
+      request_id: req.request_id,
+      saved: files.length,
+      failed: failures.length,
+      failures,
+      dest: files.length ? req.dest : null,
+    };
+    this.emit("media-export:progress", { request_id: req.request_id, done: total, total, current: null });
+    this.exports.push({ req, files, summary });
+    return summary;
   }
 
   async previewDoc(chatJid: string, id: string): Promise<PreviewRef> {
@@ -1134,6 +1184,16 @@ export class MockBackend {
 }
 
 // ------------------------------------------------------------------- helpers
+
+/** `a.pdf`, `a (1).pdf`, ... (case-insensitive), like the backend's name de-duplication. */
+export function uniqueName(used: Set<string>, name: string): string {
+  const dot = name.lastIndexOf(".");
+  const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+  let cand = name;
+  for (let n = 1; used.has(cand.toLowerCase()); n++) cand = `${stem} (${n})${ext}`;
+  used.add(cand.toLowerCase());
+  return cand;
+}
 
 function previewOf(m: Message): string {
   if (m.deleted) return "This message was deleted";

@@ -563,6 +563,75 @@ pub struct JobProgress {
     pub message: Option<String>,
 }
 
+// ---------- combined media export ----------
+
+/// One message's media, addressed by chat and message id.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MediaTarget {
+    pub chat_jid: String,
+    pub message_id: String,
+}
+
+/// How `export_media_files` writes its output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaExportMode {
+    /// One `.zip` file; `dest` is the zip path chosen in a save dialog.
+    Zip,
+    /// Individual files in an existing folder; `dest` is that folder.
+    Folder,
+}
+
+/// Arguments of `export_media_files`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MediaExportReq {
+    pub items: Vec<MediaTarget>,
+    pub mode: MediaExportMode,
+    /// Zip file path (`zip`) or folder path (`folder`), from the dialog.
+    pub dest: String,
+    /// Echoed in progress events so the UI can match them.
+    pub request_id: String,
+}
+
+/// Payload of the `media-export:progress` event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MediaExportProgress {
+    pub request_id: String,
+    #[ts(type = "number")]
+    pub done: u32,
+    #[ts(type = "number")]
+    pub total: u32,
+    /// File being processed.
+    pub current: Option<String>,
+}
+
+/// An item that could not be exported.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MediaExportFailure {
+    pub chat_jid: String,
+    pub message_id: String,
+    pub reason: String,
+}
+
+/// Final result of `export_media_files`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MediaExportSummary {
+    pub request_id: String,
+    #[ts(type = "number")]
+    pub saved: u32,
+    #[ts(type = "number")]
+    pub failed: u32,
+    pub failures: Vec<MediaExportFailure>,
+    /// The zip file or folder written; `null` when nothing was saved.
+    pub dest: Option<String>,
+}
+
 // ---------- conversions ----------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1098,6 +1167,8 @@ pub mod events {
     pub const ISSUE_NEW: &str = "issue:new";
     /// Payload `CallRecord`: a call started ringing (result in_progress) or changed state.
     pub const CALL_UPDATE: &str = "call:update";
+    /// Payload `MediaExportProgress`: progress of `export_media_files`.
+    pub const MEDIA_EXPORT_PROGRESS: &str = "media-export:progress";
 }
 
 #[cfg(test)]

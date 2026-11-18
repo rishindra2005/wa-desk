@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Images, Download, Play, Music, ImageOff } from "@lucide/svelte";
+  import { Images, Download, Play, Music, ImageOff, ListChecks, X, Check } from "@lucide/svelte";
   import * as api from "../../api";
   import type { MediaItem } from "../../bindings/MediaItem";
   import type { MediaKind } from "../../bindings/MediaKind";
@@ -11,6 +11,7 @@
   import Avatar from "../../components/Avatar.svelte";
   import Lightbox, { type LightboxItem } from "../../components/Lightbox.svelte";
   import Modal from "../../components/Modal.svelte";
+  import ExportMediaDialog, { type ExportItems } from "../../components/ExportMediaDialog.svelte";
   import DocPreview from "../../components/DocPreview.svelte";
   import DocIcon from "../../components/DocIcon.svelte";
   import { downloadMedia, openExternal } from "../../media";
@@ -32,6 +33,28 @@
   let preview = $state<MediaItem | null>(null);
   let busy = $state<Set<string>>(new Set());
   let seq = 0;
+  /** Multi-select mode: tiles toggle instead of opening, and "Download" exports the picks. */
+  let selecting = $state(false);
+  let picked = $state<Set<string>>(new Set());
+  let exportItems = $state<ExportItems | null>(null);
+  const keyOf = (it: MediaItem) => `${it.chat_jid}/${it.message_id}`;
+
+  function toggleSelecting() {
+    selecting = !selecting;
+    picked = new Set();
+  }
+  function pick(it: MediaItem) {
+    const k = keyOf(it);
+    const next = new Set(picked);
+    if (next.has(k)) next.delete(k);
+    else next.add(k);
+    picked = next;
+  }
+  function downloadPicked() {
+    const targets = items.filter((x) => picked.has(keyOf(x))).map((x) => ({ chat_jid: x.chat_jid, message_id: x.message_id }));
+    if (targets.length === 0) return;
+    exportItems = { targets, label: chat.length ? (items.find((x) => x.chat_jid === chat[0])?.chat_name ?? "WhatsApp media") : "WhatsApp media" };
+  }
 
   const TILE = 168;
   const cols = $derived(Math.max(2, Math.floor((width - 24) / TILE)));
@@ -135,6 +158,13 @@
       </div>
     </div>
     <p class="ml-auto text-xs text-muted">{formatCount(items.length)}{cursor ? "+" : ""} items</p>
+    {#if selecting}
+      <span class="text-[13px] font-semibold" data-testid="media-sel-count" aria-live="polite">{picked.size} selected</span>
+      <button class="btn btn-sm" disabled={picked.size === 0} onclick={downloadPicked} data-testid="media-download-selected"><Download size={13} /> Download</button>
+      <button class="btn btn-sm" onclick={toggleSelecting} data-testid="media-select-cancel"><X size={13} /> Cancel</button>
+    {:else}
+      <button class="btn btn-sm" onclick={toggleSelecting} data-testid="media-select-toggle"><ListChecks size={13} /> Select</button>
+    {/if}
   </div>
 
   <div class="min-h-0 flex-1" bind:clientWidth={width}>
@@ -153,7 +183,19 @@
             {#each r as it (it.chat_jid + it.message_id)}
               {@const m = it.media}
               {@const key = `${it.chat_jid}/${it.message_id}`}
-              <div class="group relative aspect-square overflow-hidden rounded-[var(--radius)] border border-border bg-surface-2" data-testid="media-tile">
+              <div class="group relative aspect-square overflow-hidden rounded-[var(--radius)] border {selecting && picked.has(key) ? 'border-accent ring-2 ring-accent' : 'border-border'} bg-surface-2" data-testid="media-tile" data-selected={selecting ? picked.has(key) : undefined}>
+                {#if selecting}
+                  <button
+                    class="absolute inset-0 z-10 cursor-pointer"
+                    aria-label="{picked.has(key) ? 'Deselect' : 'Select'} {m.filename ?? m.kind} from {it.chat_name}"
+                    aria-pressed={picked.has(key)}
+                    onclick={() => pick(it)}
+                    data-testid="media-pick"
+                  ></button>
+                  <span class="pointer-events-none absolute left-1.5 top-1.5 z-20 flex h-5 w-5 items-center justify-center rounded border-2 {picked.has(key) ? 'border-accent bg-accent text-accent-fg' : 'border-white bg-black/30'}">
+                    {#if picked.has(key)}<Check size={12} />{/if}
+                  </span>
+                {/if}
                 {#if m.source === "missing" || !m.url}
                   <div class="flex h-full flex-col items-center justify-center gap-1.5 p-2 text-center text-muted">
                     <ImageOff size={20} />
@@ -206,6 +248,17 @@
     onopen={(li) => {
       const [c, id] = li.key.split("/");
       if (c && id) void openExternal(c, id);
+    }}
+  />
+{/if}
+
+{#if exportItems}
+  <ExportMediaDialog
+    items={exportItems}
+    onclose={() => (exportItems = null)}
+    ondone={() => {
+      toggleSelecting();
+      void load();
     }}
   />
 {/if}

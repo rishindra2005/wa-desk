@@ -260,6 +260,7 @@ pub fn run() {
             commands::preview_doc,
             commands::open_media_external,
             commands::save_media_as,
+            commands::export_media_files,
             commands::open_path,
             commands::reveal_path,
             commands::send_message,

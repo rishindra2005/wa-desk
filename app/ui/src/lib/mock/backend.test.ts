@@ -177,6 +177,53 @@ describe("commands", () => {
     if (corrupt) await expect(api.ensureMedia(corrupt.chat_jid, corrupt.id)).rejects.toMatchObject({ kind: "external" });
   });
 
+  it("seeds an album and groups it", async () => {
+    const fam = b.chats.find((c) => c.name.startsWith("Family"))!;
+    const ids = fam.messages.filter((m) => m.id.startsWith("ALBUM-A")).map((m) => m.id);
+    expect(ids).toHaveLength(5);
+    const { groupAlbums } = await import("../utils/albums");
+    const groups = groupAlbums(fam.messages).filter((g) => Array.isArray(g));
+    expect(groups.map((g) => g.length).slice(-2)).toEqual([5, 3]);
+  });
+
+  it("export_media_files dedupes names, fetches missing media and reports failures", async () => {
+    b.setBridge("connected");
+    const fam = b.chats.find((c) => c.name.startsWith("Family"))!;
+    const t = (id: string) => ({ chat_jid: fam.jid, message_id: id });
+    const progress = vi.fn();
+    await api.onEvent("media-export:progress", progress);
+    const ok = await api.exportMediaFiles({
+      items: [t("ALBUM-A1"), t("ALBUM-A2"), t("NOPE")],
+      mode: "zip",
+      dest: "/home/user/Downloads/x.zip",
+      request_id: "r1",
+    });
+    expect(ok).toMatchObject({ saved: 2, failed: 1, dest: "/home/user/Downloads/x.zip" });
+    expect(ok.failures[0]?.message_id).toBe("NOPE");
+    expect(progress).toHaveBeenCalled();
+    // The missing item was downloaded on the way.
+    expect(fam.messages.find((m) => m.id === "ALBUM-A2")?.media?.url).toBeTruthy();
+    // The same message twice is exported once.
+    const dup = await api.exportMediaFiles({ items: [t("ALBUM-A1"), t("ALBUM-A1")], mode: "folder", dest: "/home/user/out", request_id: "r2" });
+    expect(dup.saved).toBe(1);
+    expect(b.exports.at(-1)?.files).toEqual(["IMG-ALBUM-1.jpg"]);
+    await expect(api.exportMediaFiles({ items: [], mode: "zip", dest: "/x.zip", request_id: "r" })).rejects.toMatchObject({ kind: "invalid" });
+    await expect(api.exportMediaFiles({ items: [t("ALBUM-A1")], mode: "zip", dest: "/x/.bridge-token", request_id: "r" })).rejects.toMatchObject({ kind: "forbidden" });
+  });
+
+  it("export_media_files in read-only mode fails missing media", async () => {
+    b.readOnly = true;
+    const fam = b.chats.find((c) => c.name.startsWith("Family"))!;
+    const r = await api.exportMediaFiles({
+      items: [{ chat_jid: fam.jid, message_id: "ALBUM-A2" }, { chat_jid: fam.jid, message_id: "ALBUM-A1" }],
+      mode: "folder",
+      dest: "/home/user/out",
+      request_id: "ro",
+    });
+    expect(r).toMatchObject({ saved: 1, failed: 1 });
+    expect(r.failures[0]?.reason).toMatch(/read-only/);
+  });
+
   it("jobs progress and finish via events", async () => {
     const progress = vi.fn();
     const done = new Promise((resolve) => void api.onJobFinished(resolve));

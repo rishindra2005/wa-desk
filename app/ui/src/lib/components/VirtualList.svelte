@@ -7,7 +7,7 @@
 -->
 <script lang="ts" generics="T">
   import type { Snippet } from "svelte";
-  import { onDestroy, untrack } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import type { VirtualListApi } from "./virtual";
 
   interface Props {
@@ -164,6 +164,11 @@
       }
       if (stickToBottom && atBottom) {
         setScroll(total);
+        // The spacer's new height may not be in the DOM yet (the browser would clamp the
+        // scroll to the old height), so pin again once it is.
+        void tick().then(() => {
+          if (atBottom) setScroll(total);
+        });
         return;
       }
       if (anchor) {

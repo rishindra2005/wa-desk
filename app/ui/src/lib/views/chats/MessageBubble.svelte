@@ -3,6 +3,8 @@
   import type { Message } from "../../bindings/Message";
   import type { MediaRef } from "../../bindings/MediaRef";
   import MediaContent from "./MediaContent.svelte";
+  import AlbumGrid from "./AlbumGrid.svelte";
+  import { Download as DownloadIcon } from "@lucide/svelte";
   import Avatar from "../../components/Avatar.svelte";
   import StatusTicks, { type TickState } from "../../components/StatusTicks.svelte";
   import { linkify } from "../../utils/text";
@@ -14,7 +16,10 @@
   import { toasts } from "../../state/toasts.svelte";
 
   interface Props {
+    /** The message the bubble acts on; for an album, its last item (the caption carrier). */
     m: Message;
+    /** All items when this bubble is an album (photos/videos sent together). */
+    album?: Message[] | null;
     isGroup: boolean;
     showName: boolean;
     first: boolean;
@@ -27,10 +32,14 @@
     /** Changes when the context menu asks to open the reaction picker. */
     reactRequest?: number;
     menuItems?: (m: Message) => MenuItem[];
+    /** Menu for the whole album (the bubble's own menu button and right-click on the caption). */
+    albumMenu?: (items: Message[]) => MenuItem[];
+    /** "Download all" on an album. */
+    ondownloadall?: (items: Message[]) => void;
     onreact: (m: Message, emoji: string) => void;
     onreply: (m: Message) => void;
     onjump: (id: string) => void;
-    onview: (m: Message) => void;
+    onview: (m: Message, album?: Message[]) => void;
     onpreview: (m: Message) => void;
     onmedia: (m: Message, ref: MediaRef) => void;
     onselect?: (m: Message, e: MouseEvent | KeyboardEvent) => void;
@@ -39,7 +48,7 @@
     ondiscard?: (m: Message) => void;
   }
   let {
-    m, isGroup, showName, first, highlighted, tick = null, selecting = false, selected = false, local = false, reactRequest = 0, menuItems,
+    m, album = null, isGroup, showName, first, highlighted, tick = null, selecting = false, selected = false, local = false, reactRequest = 0, menuItems, albumMenu, ondownloadall,
     onreact, onreply, onjump, onview, onpreview, onmedia, onselect, onprofile, onretry, ondiscard,
   }: Props = $props();
 
@@ -55,7 +64,7 @@
   const myReaction = $derived(m.reactions.find((r) => r.is_from_me)?.emoji ?? null);
   const grouped = $derived.by(() => {
     const map = new Map<string, { emoji: string; count: number; mine: boolean; names: string[] }>();
-    for (const r of m.reactions) {
+    for (const r of album ? album.flatMap((x) => x.reactions) : m.reactions) {
       const g = map.get(r.emoji) ?? { emoji: r.emoji, count: 0, mine: false, names: [] };
       g.count++;
       g.mine ||= r.is_from_me;
@@ -72,12 +81,20 @@
     pickerOpen = false;
     onreact(m, emoji);
   }
+  /** Toggle a reaction chip: removing my reaction targets the album item that carries it. */
+  function toggleChip(g: { emoji: string; mine: boolean }) {
+    if (!g.mine) return react(g.emoji);
+    const owner = album?.find((x) => x.reactions.some((r) => r.is_from_me && r.emoji === g.emoji)) ?? m;
+    pickerOpen = false;
+    onreact(owner, "");
+  }
+  const anyStarred = $derived(album ? album.some((x) => x.starred) : m.starred);
 
   async function copy() {
     if (await copyText(m.content)) toasts.success("Copied");
   }
 
-  const items = () => (menuItems && !local ? menuItems(m) : null);
+  const items = () => (local ? null : album && albumMenu ? albumMenu(album) : menuItems ? menuItems(m) : null);
   function openMore() {
     const it = items();
     if (it && moreBtn) ctxMenu.openFor(moreBtn, it, "Message actions");
@@ -102,11 +119,12 @@
   class="group relative flex px-4 outline-none {selecting ? 'cursor-pointer' : ''} {selected ? 'bg-accent-soft/70' : ''} {mine ? 'justify-end' : 'justify-start'} {first ? 'pt-2' : 'pt-0.5'}"
   data-testid="message"
   data-id={m.id}
+  data-album-ids={album ? album.map((x) => x.id).join(" ") : undefined}
   data-selected={selected}
   tabindex="0"
   role={selecting ? "option" : "group"}
   aria-selected={selecting ? selected : undefined}
-  aria-label="{mine ? 'You' : label}: {m.content || m.media?.kind || ''}"
+  aria-label="{mine ? 'You' : label}: {m.content || (album ? `${album.length} photos and videos` : m.media?.kind) || ''}"
   use:contextMenu={items}
   onclick={rowClick}
   onkeydown={rowKey}
@@ -157,8 +175,20 @@
             </button>
           {/if}
           {#if m.media}
-            <div class={m.content ? "mb-1" : ""}>
-              <MediaContent message={m} media={m.media} {onview} {onpreview} onupdate={(ref) => onmedia(m, ref)} />
+            <div class="relative {m.content ? 'mb-1' : ''}">
+              {#if album}
+                <AlbumGrid items={album} {onview} onupdate={onmedia} tileMenu={menuItems && !local ? menuItems : undefined} inert={selecting} />
+                {#if ondownloadall && !selecting}
+                  <button
+                    class="absolute left-3 top-3 z-[5] flex items-center gap-1 rounded-md bg-black/55 px-1.5 py-1 text-[11px] text-white opacity-0 transition-opacity hover:bg-black/70 focus:opacity-100 group-hover:opacity-100"
+                    onclick={() => ondownloadall?.(album)}
+                    aria-label="Download all {album.length} items"
+                    data-testid="album-download-all"
+                  ><DownloadIcon size={12} /> Download all</button>
+                {/if}
+              {:else}
+                <MediaContent message={m} media={m.media} {onview} {onpreview} onupdate={(ref) => onmedia(m, ref)} />
+              {/if}
             </div>
           {/if}
           {#if m.content}
@@ -175,7 +205,7 @@
           {/if}
         {/if}
         <span class="absolute bottom-1 right-2 flex items-center gap-1 text-[10.5px] text-faint {sticker ? 'rounded bg-surface px-1' : ''}">
-          {#if m.starred}<Star size={11} class="fill-warn text-warn" aria-label="Starred" data-testid="starred-icon" />{/if}
+          {#if anyStarred}<Star size={11} class="fill-warn text-warn" aria-label="Starred" data-testid="starred-icon" />{/if}
           <span title={dateTime(m.ts)}>{timeOfDay(m.ts)}</span>
           {#if mine && tick}<StatusTicks status={tick} />{/if}
         </span>
@@ -195,7 +225,7 @@
               class="inline-flex h-6 items-center gap-1 rounded-full border px-1.5 text-[12px] shadow-[var(--shadow)] {g.mine ? 'border-accent bg-accent-soft' : 'border-border bg-surface'}"
               title={g.names.join(", ")}
               aria-label="{g.emoji} by {g.names.join(', ')}"
-              onclick={() => react(g.mine ? "" : g.emoji)}
+              onclick={() => toggleChip(g)}
             >
               <span>{g.emoji}</span>{#if g.count > 1}<span class="text-muted">{g.count}</span>{/if}
             </button>
