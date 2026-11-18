@@ -29,15 +29,18 @@ jobs:
           - name: Linux (deb, AppImage)
             os: ubuntu-22.04
             bundles: deb,appimage
+            triple: x86_64-unknown-linux-gnu
           - name: Windows (msi, nsis)
             os: windows-latest
             bundles: msi,nsis
+            triple: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.TAG }}
+          submodules: true
 
       - name: System dependencies (Linux)
         if: runner.os == 'Linux'
@@ -66,6 +69,18 @@ jobs:
           npm ci
           npm run build
 
+      # The WhatsApp bridge (Go, cgo for SQLite) ships inside the app as a Tauri sidecar.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: bridge/whatsapp-bridge/go.mod
+          cache-dependency-path: bridge/whatsapp-bridge/go.sum
+      - name: Build the bundled bridge (sidecar)
+        shell: bash
+        run: |
+          gcc --version | head -1
+          scripts/build-bridge.sh ${{ matrix.triple }}
+          ls -la app/src-tauri/binaries/
+
       - name: Build and publish
         uses: tauri-apps/tauri-action@v0
         env:
@@ -85,9 +100,11 @@ jobs:
             - Linux: `.deb` (Ubuntu/Debian) or `.AppImage` (any distro)
             - Windows: `.msi` or `-setup.exe`
 
-            **Requirement:** wa-desk talks to a local WhatsApp bridge (a whatsmeow-based
-            service on `127.0.0.1:8080`). Without a bridge running on the same machine the
-            app installs and opens but cannot connect to WhatsApp.
+            **WhatsApp bridge included.** The app ships the
+            [wa-bridge](https://github.com/rishindra2005/wa-bridge) service and starts it when no
+            bridge is running. Link your phone from **System → Bridge** (WhatsApp → Linked devices →
+            Link a device). If you already run your own bridge, set **Settings → WhatsApp bridge** to
+            *External*.
 
             **Windows:** the Windows build is new. It compiles and passes lint in CI,
             but it has not been tried on a real Windows PC yet, and phone sync (MTP)
