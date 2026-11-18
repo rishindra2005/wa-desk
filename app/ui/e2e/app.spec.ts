@@ -300,6 +300,8 @@ test.describe("shell", () => {
 
     await page.keyboard.press("Control+k");
     await page.getByTestId("palette-input").fill("open settings");
+    // Wait for the filtered list (it updates after a short debounce) before choosing.
+    await expect(page.getByTestId("palette-item").first()).toContainText(/settings/i);
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("view-settings")).toBeVisible();
   });
