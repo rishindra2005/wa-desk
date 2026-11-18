@@ -50,14 +50,25 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      # Cached .debs: installing LibreOffice from the mirrors took up to 50 min.
-      - name: System dependencies (Tauri + converter tools used by wa-jobs tests)
-        uses: awalsh128/cache-apt-pkgs-action@v1.4.3
+      # Downloading LibreOffice etc. from the mirrors took up to 50 min, so the .debs
+      # are cached; apt-get still installs them, so their setup scripts run (the
+      # tools need them, e.g. the libblas alternatives link used by ffmpeg).
+      - name: Cache apt archives
+        uses: actions/cache@v4
         with:
-          packages: >-
-            ${{ env.TAURI_LINUX_DEPS }} ffmpeg ghostscript poppler-utils imagemagick
+          path: ~/apt-archives
+          key: ${{ runner.os }}-apt-tests-v1-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-tests-v1-
+      - name: System dependencies (Tauri + converter tools used by wa-jobs tests)
+        run: |
+          mkdir -p ~/apt-archives/partial
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            -o Dir::Cache::Archives="$HOME/apt-archives" \
+            $TAURI_LINUX_DEPS ffmpeg ghostscript poppler-utils imagemagick \
             libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui
-          version: 1
+          sudo chown -R "$USER" ~/apt-archives
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
