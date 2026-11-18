@@ -157,6 +157,38 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  bridge:
+    name: Bridge (Go) · vet, test, Windows cross-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: bridge/whatsapp-bridge/go.mod
+          cache-dependency-path: bridge/whatsapp-bridge/go.sum
+      - name: gofmt
+        working-directory: bridge/whatsapp-bridge
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: vet
+        working-directory: bridge/whatsapp-bridge
+        run: go vet ./...
+      - name: test
+        working-directory: bridge/whatsapp-bridge
+        run: go test ./...
+      - name: MinGW for the Windows cross-build (cgo, go-sqlite3)
+        run: sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
+      - name: Windows cross-build
+        working-directory: bridge/whatsapp-bridge
+        env:
+          CGO_ENABLED: "1"
+          GOOS: windows
+          GOARCH: amd64
+          CC: x86_64-w64-mingw32-gcc
+        run: go build -trimpath -ldflags "-s -w" -o /tmp/wa-bridge.exe .
+
   windows:
     name: Windows · build, clippy, compile tests
     runs-on: windows-latest
