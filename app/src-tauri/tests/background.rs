@@ -258,7 +258,15 @@ async fn job_progress_and_reconcile_and_cleanup() {
     let j = h.core.ensure_index().await.unwrap().unwrap();
     let done = wait_job(&h.core, j.id).await;
     assert_eq!(done.status, JobStatus::Succeeded);
-    let fin = h.rec.named(events::JOB_FINISHED);
+    // The finished event is emitted just after the status flips; allow for a busy machine.
+    let mut fin = h.rec.named(events::JOB_FINISHED);
+    for _ in 0..100 {
+        if !fin.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        fin = h.rec.named(events::JOB_FINISHED);
+    }
     assert_eq!(fin.last().unwrap()["id"], j.id);
     h.core.reconcile_tick().await.unwrap();
     assert_eq!(h.core.outbox_cleanup_tick().await.unwrap(), 0);
