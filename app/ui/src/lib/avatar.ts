@@ -1,5 +1,5 @@
 // Avatar URL helpers and a small in-memory cache of pictures that failed to load,
-// so a chat without a profile picture is requested once, not on every render.
+// so a chat without a profile picture is requested once (per retry window), not on every render.
 
 import type { ChatType } from "./bindings/ChatType";
 
@@ -27,14 +27,25 @@ export function fullAvatarUrl(url: string): string {
   return url + (url.includes("?") ? "&" : "?") + "full=1";
 }
 
-const failed = new Set<string>();
+/**
+ * A failed picture is not requested again for this long. It is retried after
+ * that (on the next render), so a transient failure (bridge offline or slow at
+ * startup) does not hide a logo for the rest of the session.
+ */
+export const AVATAR_RETRY_MS = 5 * 60 * 1000;
+
+const failed = new Map<string, number>();
 const loaded = new Set<string>();
 
-export function avatarFailed(url: string): boolean {
-  return failed.has(url);
+export function avatarFailed(url: string, now = Date.now()): boolean {
+  const at = failed.get(url);
+  if (at === undefined) return false;
+  if (now - at < AVATAR_RETRY_MS) return true;
+  failed.delete(url);
+  return false;
 }
-export function markAvatarFailed(url: string): void {
-  failed.add(url);
+export function markAvatarFailed(url: string, now = Date.now()): void {
+  failed.set(url, now);
   loaded.delete(url);
 }
 export function avatarLoaded(url: string): boolean {

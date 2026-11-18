@@ -233,6 +233,93 @@ async fn avatar_served_from_disk_when_bridge_down() {
     );
 }
 
+/// Bridge `chat_meta` rows: (jid, chat_type, parent_jid).
+fn meta(h: &H, rows: &[(&str, &str, Option<&str>)]) {
+    let c = h.f.bridge_conn();
+    c.execute_batch(
+        "CREATE TABLE IF NOT EXISTS chat_meta(jid TEXT PRIMARY KEY, chat_type TEXT NOT NULL, \
+         parent_jid TEXT, name TEXT, description TEXT, updated_at TIMESTAMP);",
+    )
+    .unwrap();
+    for (jid, ty, parent) in rows {
+        c.execute(
+            "INSERT INTO chat_meta (jid, chat_type, parent_jid) VALUES (?1,?2,?3)",
+            rusqlite::params![jid, ty, parent],
+        )
+        .unwrap();
+    }
+    h.core.db().names().invalidate();
+}
+
+/// Avatar resolution per chat kind: a community group without a picture of
+/// its own (the announcement group never has one) shows its community's logo;
+/// communities and channels use their own; plain groups without a picture and
+/// orphan sub-groups stay 404.
+#[tokio::test(flavor = "multi_thread")]
+async fn avatar_per_chat_kind_with_community_fallback() {
+    let h = harness().await;
+    let (community, announce, plain_none) = (
+        "120363000000000099@g.us",
+        "none-announce@g.us",
+        "none-plain@g.us",
+    );
+    meta(
+        &h,
+        &[
+            (community, "community", None),
+            (announce, "group", Some(community)),
+            ("none-orphan@g.us", "group", Some("none-parent@g.us")),
+            ("none-parent@g.us", "community", None),
+            ("120363999999999999@newsletter", "channel", None),
+        ],
+    );
+    let enc = |j: &str| format!("wa-media://localhost/a/{}", j.replace('@', "%40"));
+    // Announcement group → the community's picture file.
+    let r = get(&h, &enc(announce)).await;
+    assert_eq!(r.status(), StatusCode::OK);
+    let asked: Vec<String> = h
+        .mock
+        .calls_to("/api/avatar")
+        .iter()
+        .map(|v| v["jid"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(asked, vec![announce.to_string(), community.to_string()]);
+    let f = h.core.avatar_file(announce, false).await.unwrap();
+    assert!(f.ends_with("120363000000000099@g.us.jpg"), "{f:?}");
+    // Full size falls back to the community's full picture.
+    let f = h.core.avatar_file(announce, true).await.unwrap();
+    assert!(f.ends_with("120363000000000099@g.us-full.jpg"), "{f:?}");
+    // Community and channel: their own pictures.
+    assert_eq!(get(&h, &enc(community)).await.status(), StatusCode::OK);
+    let r = get(&h, &enc("120363999999999999@newsletter")).await;
+    assert_eq!(r.status(), StatusCode::OK);
+    let f = h
+        .core
+        .avatar_file("120363999999999999@newsletter", false)
+        .await
+        .unwrap();
+    assert!(f.ends_with("120363999999999999@newsletter.jpg"));
+    // A group outside any community: no fallback, cacheable 404.
+    let r = get(&h, &enc(plain_none)).await;
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    assert!(hdr(&r, header::CACHE_CONTROL).contains("max-age=1800"));
+    // Sub-group whose community has no picture either: 404.
+    assert_eq!(
+        get(&h, &enc("none-orphan@g.us")).await.status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn avatar_transient_failure_is_not_cacheable() {
+    let h = harness_down().await;
+    let r = get(&h, "wa-media://localhost/a/x%40g.us").await;
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    assert_eq!(hdr(&r, header::CACHE_CONTROL), "no-store");
+    let e = h.core.avatar_file("x@g.us", false).await.unwrap_err();
+    assert_eq!(e.message, wa_desk_lib::core::PICTURE_UNAVAILABLE);
+}
+
 // ---------- stats, links, starred ----------
 
 #[tokio::test(flavor = "multi_thread")]

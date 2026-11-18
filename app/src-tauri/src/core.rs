@@ -19,7 +19,7 @@ pub use notifications::{
     Activation, DesktopNote, NotificationCenter, NotificationServer, ServerEvent, counted_title,
     summary_body,
 };
-pub use profile::{AVATAR_WAIT, PROFILE_TTL, format_phone};
+pub use profile::{AVATAR_WAIT, NO_PICTURE, PICTURE_UNAVAILABLE, PROFILE_TTL, format_phone};
 pub use warm::{UserBusy, WarmState, WarmStats};
 
 use std::collections::{BTreeMap, HashSet};

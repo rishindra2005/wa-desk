@@ -11,7 +11,7 @@ Calling conventions:
 | Command | Args (JS) | Returns |
 |---|---|---|
 | `overview` | none | `Overview` |
-| `list_chats` | `{ query: ChatQuery }` | `Page<ChatSummary>` |
+| `list_chats` | `{ query: ChatQuery }` | `Page<ChatSummary>`. Community parents hold no messages of their own: they are listed only with `kind: "community"`, sorted by (and showing the time of) the newest activity in their groups |
 | `get_chat` | `{ jid: string }` | `ChatSummary` |
 | `get_messages` | `{ query: MessagesQuery }` | `Page<Message>`: newest page first, items in **ascending** time order, and `next_cursor` pages **older**. With `after`, returns the next newer page (ascending); `next_cursor` then pages **newer** and is `null` at the newest message |
 | `get_message_context` | `{ chatJid, messageId, radius: number }` | `Message[]` (ascending, includes the target) |
@@ -84,7 +84,7 @@ The backend returns complete URLs. The UI uses them as-is in `src`/`href`/`fetch
 - `wa-media://localhost/m/<urlenc chat_jid>/<urlenc message_id>`: the original file. Supports HTTP `Range` (video/audio seeking) and sets `Content-Type`.
 - `wa-media://localhost/t/<chat>/<id>`: a 256 px thumbnail, generated on demand (images, video frames, PDF first page). Returns 404 if none is available.
 - `wa-media://localhost/p/<chat>/<id>`: the preview PDF for office documents, cached after `preview_doc`.
-- `wa-media://localhost/a/<urlenc jid>`: profile picture (contact, group, community or channel), cached; 404 when there is none (show initials). Add `?full=1` for the full-size picture.
+- `wa-media://localhost/a/<urlenc jid>`: profile picture (contact, group, community or channel), cached; 404 when there is none (show initials). Add `?full=1` for the full-size picture. A community group without a picture of its own (always the case for the announcement group) gets its community's picture. A 404 for "no picture" is cacheable (`max-age=1800`); a 404 because the bridge is offline, slow or failing is `no-store`, and the UI retries a failed picture after 5 minutes.
 - `wa-media://localhost/x/<urlenc absolute path>`: an exported or converted output file. Only files inside the exports or cache folders are served.
 
 Paths are always resolved, canonicalised and scope-checked in Rust. `.bridge-token` and `*.db*` files are never served.

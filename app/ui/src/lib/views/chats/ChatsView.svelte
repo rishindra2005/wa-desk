@@ -57,8 +57,13 @@
     app.openChatJid = c.jid;
     wasUnread = c.unread;
     chat = c;
-    if (app.profileJid && app.profileJid !== c.jid) app.openProfile(c.jid);
+    followProfile(c);
     void markRead(c);
+  }
+
+  /** The info drawer follows the open chat; a community opens it (its groups live there). */
+  function followProfile(c: ChatSummary) {
+    if (app.profileJid ? app.profileJid !== c.jid : c.chat_type === "community") app.openProfile(c.jid);
   }
 
   // Resolve app.openChatJid (from search, palette, automations) into a summary.
@@ -70,7 +75,7 @@
         if (app.openChatJid === jid) {
           wasUnread = c.unread;
           chat = c;
-          if (app.profileJid && app.profileJid !== c.jid) app.openProfile(c.jid);
+          followProfile(c);
           void markRead(c);
         }
       },
