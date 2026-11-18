@@ -47,6 +47,7 @@ Calling conventions:
 | `react` | `{ req: ReactReq }` | `void` |
 | `mark_read` | `{ chatJid }` | `void`: the UI calls it when a chat is opened, and again while it is open in a focused window (new messages, window focus). It always withdraws the chat's desktop notifications first, even when the chat is already read, in read-only mode or with the bridge offline |
 | `connection_status` | none | `ConnectionState` |
+| `bridge_supervisor` | none | `SupervisorStatus`: what the bundled-bridge supervisor is doing (`starting`, `external`, `disabled`, `not_installed`, `running` + `pid`, `crashed`, `gave_up`, `error`, `stopped`), the last error in `detail`, and `restarts` since start |
 | `reconnect` | none | `ConnectionState` |
 | `start_job` | `{ spec: JobSpec }` | `JobRecord` |
 | `cancel_job` | `{ id: number }` | `void` |
@@ -63,7 +64,7 @@ Calling conventions:
 | `clear_resolved_issues` | none | `number` |
 | `export_issue_bundle` | `{ ids: number[] \| null }` | `string`: path of the zip in the exports folder |
 | `get_settings` | none | `Settings` |
-| `set_settings` | `{ settings: Settings }` | `Settings` |
+| `set_settings` | `{ settings: Settings }` | `Settings`. `Settings.bridge_mode` (`auto` \| `external` \| `bundled`, default `auto`) decides who runs the bridge and is read at app start: `auto` uses a bridge that already answers on the bridge URL and otherwise spawns the bundled `wa-bridge` sidecar; `external` never spawns; `bundled` always spawns and reports an `error` state if the port is taken |
 
 A message with several attachments is sent by the UI as one `send_message` per file, strictly in order: the typed text is the caption of the first file only (and only the first quotes a reply). A failed file is marked failed with a Retry button and does not stop the others.
 

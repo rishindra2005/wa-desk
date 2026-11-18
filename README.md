@@ -47,6 +47,25 @@ Launch from the app menu or run `wa-desk`.
 - Tray menu: *Show / Hide wa-desk*, *Pause automations*, *Quit wa-desk*.
 - Settings has "Start wa-desk when I log in" (autostart) and "Start hidden in the tray".
 
+## Bundled bridge
+
+Release builds ship the WhatsApp bridge (the Go program from the `bridge/` submodule) as a sidecar named `wa-bridge`, next to the `wa-desk` executable. wa-desk starts and supervises it, so there is nothing to install separately.
+
+- **What runs.** At startup wa-desk checks the bridge URL (`http://127.0.0.1:8080` by default). If a bridge already answers there, for example your own `whatsapp-bridge.service`, wa-desk leaves it alone. Otherwise it starts `wa-bridge` in the background (the window never waits for it).
+- **Where data lives.** The bridge runs with working directory `<data dir>/whatsapp-mcp/runtime` (created owner-only), so it uses the same `store/` that wa-desk reads: `~/.local/share/whatsapp-mcp/runtime/store/` on Linux. An existing store keeps working.
+- **Environment.** `WHATSAPP_BRIDGE_PORT` (from the bridge URL), `WEBHOOK_ENABLED=false`, `WHATSAPP_DEVICE_NAME=wa-desk`.
+- **Pairing.** On a fresh store, open **System**, where the bridge card shows the QR code. Scan it from WhatsApp, Linked devices.
+- **Restarts.** If it exits unexpectedly it is restarted after 1 s, 2 s, 5 s and so on, up to 60 s. After repeated fast crashes wa-desk gives up and records an issue.
+- **Quit.** **Quit wa-desk** in the tray menu stops the bridge. Closing the window only hides it, so the bridge keeps running.
+- **Log.** `bridge.log` in the logs folder (`~/.local/state/wa-desk/logs/`), rotated at 5 MB. The auth token and pairing QR art are never written to it.
+- **Setting `bridge_mode`** (Settings, "WhatsApp bridge"; applied at the next start):
+  - `auto` (default): use a running bridge, else start the bundled one.
+  - `external`: never start a bridge. Pick this if you run the bridge yourself, so two bridges never share one store.
+  - `bundled`: always start the bundled bridge; reports an error if the port is already in use.
+- The System view's bridge card shows the state: running (with pid), external, not installed (builds without the sidecar, such as `cargo tauri dev`), crashed or gave up.
+- A bridge URL that does not point at this computer is never started for.
+- `WA_DESK_BRIDGE_BIN` overrides the sidecar path (development).
+
 ## First run
 
 The search index is built once, in the background. For about 115k messages this takes roughly 10 seconds. Chats and media work meanwhile. Search becomes available when the index is ready. After that the index is updated live as messages arrive.
@@ -118,6 +137,7 @@ Paths follow the XDG directories on your system.
 | `WA_DESK_READ_ONLY=1` | Disable all sends, reactions, receipts and automations |
 | `WA_DESK_LOG` | Log filter, `tracing` `EnvFilter` syntax, e.g. `wa_desk_lib=debug` |
 | `WA_DESK_BRIDGE_URL` | Bridge base URL (default `http://127.0.0.1:8080`) |
+| `WA_DESK_BRIDGE_BIN` | Path of the bundled bridge binary (default: `wa-bridge` next to the executable) |
 | `WEBKIT_DISABLE_DMABUF_RENDERER` | Set to `1` by the app unless already set (see Troubleshooting) |
 
 ## Architecture

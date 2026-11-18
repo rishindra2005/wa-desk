@@ -1,5 +1,8 @@
 {
   "build": {
     "beforeBuildCommand": "node -e \"\""
+  },
+  "bundle": {
+    "externalBin": ["binaries/wa-bridge"]
   }
 }

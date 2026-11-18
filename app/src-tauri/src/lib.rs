@@ -7,6 +7,7 @@
 //! - [`tray`]: tray icon/menu; closing the window hides it to the tray.
 
 pub mod background;
+pub mod bridge_supervisor;
 pub mod clipboard;
 pub mod commands;
 pub mod core;
@@ -180,6 +181,7 @@ fn setup(
     start_hidden_arg: bool,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let handle = app.handle().clone();
+    let sup_paths = paths.clone();
     let bridge = Arc::new(wa_bridge::BridgeClient::new(&paths)?);
     let (notifications, mut note_events) = notification_server(&handle);
     let deps = CoreDeps {
@@ -233,6 +235,7 @@ fn setup(
     if let Err(e) = tauri::async_runtime::block_on(core.apply_saved_zoom()) {
         tracing::warn!(error = %e, "could not apply the saved zoom");
     }
+    start_bridge_supervisor(app, &core, &sup_paths, settings.bridge_mode);
     let hidden = start_hidden_arg || settings.start_hidden;
     if !hidden {
         tray::show_main(&handle);
@@ -243,6 +246,36 @@ fn setup(
         "startup complete"
     );
     Ok(())
+}
+
+/// Start the bundled-bridge supervisor in the background (never blocks the
+/// window): it checks for an external bridge first and may spawn the sidecar.
+fn start_bridge_supervisor(
+    app: &tauri::App<Wry>,
+    core: &Arc<AppCore>,
+    paths: &Paths,
+    mode: wa_core::types::BridgeMode,
+) {
+    use bridge_supervisor::{Config, Supervisor, TcpProbe, TokioSpawner, parse_bridge_url};
+    let sup = Arc::new(Supervisor::new());
+    app.manage(sup.clone());
+    let addr = parse_bridge_url(&paths.bridge_url);
+    let cfg = Config {
+        mode,
+        binary: bridge_supervisor::sidecar_path(),
+        bridge_store: paths.bridge_store.clone(),
+        logs: paths.logs.clone(),
+        addr: addr.clone(),
+    };
+    let (host, port, _) = addr.unwrap_or_default();
+    let probe = Arc::new(TcpProbe { host, port });
+    let core = core.clone();
+    let on_issue: bridge_supervisor::IssueFn = Arc::new(move |title, detail| {
+        core.record_issue(wa_core::ErrorKind::External, "app.bridge", title, detail);
+    });
+    tauri::async_runtime::spawn(async move {
+        sup.run(cfg, Arc::new(TokioSpawner), probe, on_issue).await;
+    });
 }
 
 /// Entry point.
@@ -335,6 +368,7 @@ pub fn run() {
             commands::reject_call,
             commands::mark_read,
             commands::connection_status,
+            commands::bridge_supervisor,
             commands::reconnect,
             commands::start_job,
             commands::cancel_job,
@@ -381,6 +415,10 @@ pub fn run() {
             tracing::info!("wa-desk exiting");
             if let Some(core) = app.try_state::<Arc<AppCore>>() {
                 core.shutdown();
+            }
+            if let Some(sup) = app.try_state::<Arc<bridge_supervisor::Supervisor>>() {
+                // Quit (tray or otherwise) ends here; closing the window never does.
+                tauri::async_runtime::block_on(sup.stop());
             }
             let sd = app.state::<Shutdown>();
             sd.token.cancel();

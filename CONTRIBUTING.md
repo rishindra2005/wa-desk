@@ -62,6 +62,13 @@ Other expectations:
 - Tests cover the edge cases of the change.
 - Clear, focused commit messages.
 
+## The bundled bridge
+The Go bridge lives in the `bridge/` git submodule ([wa-bridge](https://github.com/rishindra2005/wa-bridge)). Do not edit it from this repo; change it in its own repository and bump the submodule.
+- Clone with `git clone --recurse-submodules`, or run `git submodule update --init` in an existing checkout.
+- Build the sidecar for the host with `scripts/build-bridge.sh`. It needs Go and a C compiler (go-sqlite3 uses CGO) and writes `app/src-tauri/binaries/wa-bridge-<target triple>[.exe]`, which is git-ignored. Pass a Rust target triple to build for another target (cross-compiling needs the matching C compiler in `CC`).
+- Only release builds bundle it: `tauri.release.conf.json` adds `bundle.externalBin`. `tauri.conf.json` does not, so dev builds and tests never need Go. Run `scripts/build-bridge.sh` before `cargo tauri build --config tauri.release.conf.json`.
+- The supervisor is `app/src-tauri/src/bridge_supervisor.rs`. Its tests use fake binaries and temp dirs, never a real bridge or store. In `cargo tauri dev` there is no sidecar unless you set `WA_DESK_BRIDGE_BIN`; never point it at your real store.
+
 ## Running things
 - Rust: `cargo test --workspace`, `cargo nextest run --workspace`.
 - UI dev against mocks: `cd app/ui && npm run dev` (mock IPC is on when `window.__TAURI_INTERNALS__` is absent).
