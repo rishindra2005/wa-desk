@@ -47,7 +47,7 @@ Calling conventions:
 | `react` | `{ req: ReactReq }` | `void` |
 | `mark_read` | `{ chatJid }` | `void`: the UI calls it when a chat is opened, and again while it is open in a focused window (new messages, window focus). It always withdraws the chat's desktop notifications first, even when the chat is already read, in read-only mode or with the bridge offline |
 | `connection_status` | none | `ConnectionState` |
-| `bridge_supervisor` | none | `SupervisorStatus`: what the bundled-bridge supervisor is doing (`starting`, `external`, `disabled`, `not_installed`, `running` + `pid`, `crashed`, `gave_up`, `error`, `stopped`), the last error in `detail`, and `restarts` since start |
+| `bridge_supervisor` | none | `SupervisorStatus`: what the bundled-bridge supervisor is doing (`starting`, `external` (a bridge not started by wa-desk: one answers on the URL, the systemd user unit `whatsapp-bridge.service` is enabled/active in `auto` mode, or the store lock `runtime/.wa-desk-bridge.lock` is held elsewhere; `detail` says which), `disabled`, `not_installed`, `running` + `pid`, `crashed`, `gave_up`, `error`, `stopped`), the last error in `detail`, and `restarts` since start |
 | `reconnect` | none | `ConnectionState` |
 | `start_job` | `{ spec: JobSpec }` | `JobRecord` |
 | `cancel_job` | `{ id: number }` | `void` |

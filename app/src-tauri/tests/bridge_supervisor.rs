@@ -11,8 +11,9 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use wa_core::types::{BridgeMode, SupervisorState};
 use wa_desk_lib::bridge_supervisor::{
-    Config, Decision, Probe, RestartPolicy, RotatingLog, RunningChild, SpawnSpec, Spawner,
-    Supervisor, decide, parse_bridge_url,
+    Clock, Config, Decision, Probe, RECHECK_GAP, RestartPolicy, RotatingLog, RunningChild,
+    SpawnSpec, Spawner, StoreLock, Supervisor, SystemctlCheck, Systemd, decide, lock_path,
+    parse_bridge_url,
 };
 
 // ---------------------------------------------------------------- decision
@@ -211,9 +212,66 @@ fn start(
     script: Vec<Result<Option<Duration>, String>>,
 ) -> Env {
     let dir = tempfile::tempdir().unwrap();
+    start_with(
+        dir,
+        mode,
+        with_bin,
+        Arc::new(FakeProbe(reachable)),
+        Arc::new(NoSystemd),
+        Arc::new(FakeClock::default()),
+        script,
+    )
+}
+
+struct NoSystemd;
+
+#[async_trait::async_trait]
+impl Systemd for NoSystemd {
+    async fn bridge_unit_present(&self) -> bool {
+        false
+    }
+}
+
+/// Records requested sleeps and returns at once.
+#[derive(Default)]
+struct FakeClock(Mutex<Vec<Duration>>);
+
+#[async_trait::async_trait]
+impl Clock for FakeClock {
+    async fn sleep(&self, d: Duration) {
+        self.0.lock().push(d);
+    }
+}
+
+/// Counts probes; answers true from probe number `up_from` (1-based) on.
+struct CountingProbe {
+    calls: Mutex<u32>,
+    up_from: u32,
+}
+
+#[async_trait::async_trait]
+impl Probe for CountingProbe {
+    async fn is_up(&self) -> bool {
+        let mut c = self.calls.lock();
+        *c += 1;
+        *c >= self.up_from
+    }
+}
+
+fn start_with(
+    dir: tempfile::TempDir,
+    mode: BridgeMode,
+    with_bin: bool,
+    probe: Arc<dyn Probe>,
+    systemd: Arc<dyn Systemd>,
+    clock: Arc<dyn Clock>,
+    script: Vec<Result<Option<Duration>, String>>,
+) -> Env {
     std::fs::create_dir_all(dir.path().join("logs")).unwrap();
     let sup = Arc::new(Supervisor::new());
     sup.fixed_delay(Duration::from_millis(5));
+    sup.set_systemd(systemd);
+    sup.set_clock(clock);
     let spawner = Arc::new(FakeSpawner {
         script: Mutex::new(script.into()),
         ..Default::default()
@@ -225,7 +283,7 @@ fn start(
         s.run(
             c,
             sp,
-            Arc::new(FakeProbe(reachable)),
+            probe,
             Arc::new(move |t, d| is.lock().push((t.to_string(), d.to_string()))),
         )
         .await;
@@ -337,6 +395,261 @@ async fn stop_during_backoff_does_not_respawn() {
     until(&e.sup, |s| s.state == SupervisorState::Crashed).await;
     e.sup.stop().await;
     assert_eq!(e.sup.status().state, SupervisorState::Stopped);
+    assert_eq!(e.spawner.specs.lock().len(), 1);
+}
+
+// ------------------------------------------- lock, systemd, re-checks
+
+fn lock_file(dir: &tempfile::TempDir) -> PathBuf {
+    lock_path(&dir.path().join("runtime/store"))
+}
+
+fn start_simple(
+    dir: tempfile::TempDir,
+    mode: BridgeMode,
+    probe: Arc<dyn Probe>,
+    systemd: Arc<dyn Systemd>,
+    clock: Arc<dyn Clock>,
+    script: Vec<Result<Option<Duration>, String>>,
+) -> Env {
+    start_with(dir, mode, true, probe, systemd, clock, script)
+}
+
+#[tokio::test]
+async fn a_held_store_lock_prevents_spawning() {
+    let dir = tempfile::tempdir().unwrap();
+    let held = StoreLock::try_acquire(&lock_file(&dir)).unwrap().unwrap();
+    let e = start_simple(
+        dir,
+        BridgeMode::Auto,
+        Arc::new(FakeProbe(false)),
+        Arc::new(NoSystemd),
+        Arc::new(FakeClock::default()),
+        vec![],
+    );
+    until(&e.sup, |s| s.state == SupervisorState::External).await;
+    assert!(e.spawner.specs.lock().is_empty());
+    drop(held);
+}
+
+#[tokio::test]
+async fn bundled_mode_refuses_when_the_lock_is_held() {
+    let dir = tempfile::tempdir().unwrap();
+    let held = StoreLock::try_acquire(&lock_file(&dir)).unwrap().unwrap();
+    let e = start_simple(
+        dir,
+        BridgeMode::Bundled,
+        Arc::new(FakeProbe(false)),
+        Arc::new(NoSystemd),
+        Arc::new(FakeClock::default()),
+        vec![],
+    );
+    until(&e.sup, |s| s.state == SupervisorState::Error).await;
+    assert!(e.sup.status().detail.unwrap().contains("lock"));
+    assert!(e.spawner.specs.lock().is_empty());
+    drop(held);
+}
+
+#[tokio::test]
+async fn the_lock_is_held_while_running_and_released_on_stop() {
+    let e = start(BridgeMode::Auto, true, false, vec![Ok(None)]);
+    until(&e.sup, |s| s.state == SupervisorState::Running).await;
+    let path = lock_file(&e.dir);
+    assert!(
+        StoreLock::try_acquire(&path).unwrap().is_none(),
+        "lock must be held while the bridge runs"
+    );
+    e.sup.stop().await;
+    assert!(StoreLock::try_acquire(&path).unwrap().is_some());
+}
+
+#[cfg(target_os = "linux")]
+fn fake_systemctl(dir: &std::path::Path, enabled: bool, active: bool) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let p = dir.join("systemctl");
+    let body = format!(
+        "#!/bin/sh\ncase \"$*\" in\n*is-enabled*whatsapp-bridge.service) exit {};;\n*is-active*whatsapp-bridge.service) exit {};;\nesac\nexit 3\n",
+        if enabled { 0 } else { 1 },
+        if active { 0 } else { 3 }
+    );
+    std::fs::write(&p, body).unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn systemd_unit_enabled_or_active_means_external_in_auto_and_never_spawns() {
+    let tools = tempfile::tempdir().unwrap();
+    for (enabled, active) in [(true, false), (false, true)] {
+        let sc = SystemctlCheck {
+            program: fake_systemctl(tools.path(), enabled, active),
+        };
+        let clock = Arc::new(FakeClock::default());
+        let e = start_simple(
+            tempfile::tempdir().unwrap(),
+            BridgeMode::Auto,
+            Arc::new(FakeProbe(false)), // port not answering yet
+            Arc::new(sc),
+            clock.clone(),
+            vec![],
+        );
+        until(&e.sup, |s| s.state == SupervisorState::External).await;
+        assert!(e.spawner.specs.lock().is_empty());
+        assert!(
+            clock.0.lock().is_empty(),
+            "no waiting once systemd is detected"
+        );
+        assert!(
+            e.sup
+                .status()
+                .detail
+                .unwrap()
+                .contains("whatsapp-bridge.service")
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn systemctl_check_handles_absent_unit_and_missing_binary() {
+    let tools = tempfile::tempdir().unwrap();
+    let none = SystemctlCheck {
+        program: fake_systemctl(tools.path(), false, false),
+    };
+    assert!(!none.bridge_unit_present().await);
+    let missing = SystemctlCheck {
+        program: tools.path().join("no-such-systemctl"),
+    };
+    assert!(!missing.bridge_unit_present().await);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn bundled_mode_ignores_systemd_but_still_honours_the_lock() {
+    let tools = tempfile::tempdir().unwrap();
+    let sc = SystemctlCheck {
+        program: fake_systemctl(tools.path(), true, true),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let held = StoreLock::try_acquire(&lock_file(&dir)).unwrap().unwrap();
+    let e = start_simple(
+        dir,
+        BridgeMode::Bundled,
+        Arc::new(FakeProbe(false)),
+        Arc::new(sc),
+        Arc::new(FakeClock::default()),
+        vec![],
+    );
+    until(&e.sup, |s| s.state == SupervisorState::Error).await;
+    assert!(e.spawner.specs.lock().is_empty());
+    drop(held);
+}
+
+#[tokio::test]
+async fn auto_rechecks_the_port_three_times_over_six_seconds_before_spawning() {
+    let clock = Arc::new(FakeClock::default());
+    let probe = Arc::new(CountingProbe {
+        calls: Mutex::new(0),
+        up_from: u32::MAX,
+    });
+    let e = start_simple(
+        tempfile::tempdir().unwrap(),
+        BridgeMode::Auto,
+        probe.clone(),
+        Arc::new(NoSystemd),
+        clock.clone(),
+        vec![Ok(None)],
+    );
+    until(&e.sup, |s| s.state == SupervisorState::Running).await;
+    assert_eq!(*clock.0.lock(), vec![RECHECK_GAP, RECHECK_GAP]);
+    assert_eq!(RECHECK_GAP * 2, Duration::from_secs(6));
+    assert_eq!(*probe.calls.lock(), 3);
+    e.sup.stop().await;
+}
+
+#[tokio::test]
+async fn a_bridge_that_comes_up_during_the_rechecks_is_external() {
+    let clock = Arc::new(FakeClock::default());
+    let probe = Arc::new(CountingProbe {
+        calls: Mutex::new(0),
+        up_from: 2,
+    });
+    let e = start_simple(
+        tempfile::tempdir().unwrap(),
+        BridgeMode::Auto,
+        probe,
+        Arc::new(NoSystemd),
+        clock.clone(),
+        vec![],
+    );
+    until(&e.sup, |s| s.state == SupervisorState::External).await;
+    assert_eq!(clock.0.lock().len(), 1);
+    assert!(e.spawner.specs.lock().is_empty());
+}
+
+#[tokio::test]
+async fn bundled_mode_does_not_wait_for_rechecks() {
+    let clock = Arc::new(FakeClock::default());
+    let e = start_simple(
+        tempfile::tempdir().unwrap(),
+        BridgeMode::Bundled,
+        Arc::new(FakeProbe(false)),
+        Arc::new(NoSystemd),
+        clock.clone(),
+        vec![Ok(None)],
+    );
+    until(&e.sup, |s| s.state == SupervisorState::Running).await;
+    assert!(clock.0.lock().is_empty());
+    e.sup.stop().await;
+}
+
+#[tokio::test]
+async fn after_a_crash_another_bridge_answering_switches_to_external() {
+    // Probes 1-3 (startup and re-checks) are down; probe 4 (after the exit) is up.
+    let probe = Arc::new(CountingProbe {
+        calls: Mutex::new(0),
+        up_from: 4,
+    });
+    let e = start_simple(
+        tempfile::tempdir().unwrap(),
+        BridgeMode::Auto,
+        probe,
+        Arc::new(NoSystemd),
+        Arc::new(FakeClock::default()),
+        vec![Ok(Some(Duration::from_millis(5))), Ok(None)],
+    );
+    until(&e.sup, |s| s.state == SupervisorState::External).await;
+    assert_eq!(e.spawner.specs.lock().len(), 1, "no second spawn");
+    assert!(
+        StoreLock::try_acquire(&lock_file(&e.dir))
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn after_a_crash_a_stolen_lock_switches_to_external() {
+    let e = start(
+        BridgeMode::Auto,
+        true,
+        false,
+        vec![Ok(Some(Duration::from_millis(150))), Ok(None)],
+    );
+    e.sup.fixed_delay(Duration::from_millis(400));
+    until(&e.sup, |s| s.state == SupervisorState::Running).await;
+    let path = lock_file(&e.dir);
+    // Wait for the crash to release the lock, then take it ourselves.
+    let mut stolen = None;
+    for _ in 0..200 {
+        if let Some(l) = StoreLock::try_acquire(&path).unwrap() {
+            stolen = Some(l);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(stolen.is_some(), "lock released when the child exits");
+    until(&e.sup, |s| s.state == SupervisorState::External).await;
     assert_eq!(e.spawner.specs.lock().len(), 1);
 }
 

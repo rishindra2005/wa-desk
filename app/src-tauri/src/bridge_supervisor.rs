@@ -268,6 +268,107 @@ impl Probe for TcpProbe {
     }
 }
 
+/// systemd user unit that, when enabled or active, means the user runs the
+/// bridge themselves (the laptop setup). Auto mode then never spawns.
+pub const SYSTEMD_UNIT: &str = "whatsapp-bridge.service";
+/// Name of the advisory lock file next to the bridge's `store/`.
+pub const LOCK_NAME: &str = ".wa-desk-bridge.lock";
+/// Auto mode probes the port this many times before deciding to spawn.
+pub const RECHECKS: u32 = 3;
+/// Gap between those probes (3 probes span about 6 s).
+pub const RECHECK_GAP: Duration = Duration::from_secs(3);
+
+/// Asks whether the bridge is managed by something else (systemd).
+#[async_trait::async_trait]
+pub trait Systemd: Send + Sync {
+    /// True if the bridge's service unit is enabled or active.
+    async fn bridge_unit_present(&self) -> bool;
+}
+
+/// Real check: `systemctl --user is-enabled|is-active whatsapp-bridge.service`.
+/// A missing `systemctl` (or non-Linux) counts as "not present".
+pub struct SystemctlCheck {
+    /// The `systemctl` program (a fake in tests).
+    pub program: PathBuf,
+}
+
+impl Default for SystemctlCheck {
+    fn default() -> Self {
+        Self {
+            program: PathBuf::from("systemctl"),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Systemd for SystemctlCheck {
+    async fn bridge_unit_present(&self) -> bool {
+        if !cfg!(target_os = "linux") {
+            return false;
+        }
+        for verb in ["is-enabled", "is-active"] {
+            let mut cmd = tokio::process::Command::new(&self.program);
+            cmd.args(["--user", verb, SYSTEMD_UNIT])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .kill_on_drop(true);
+            let ok = match tokio::time::timeout(Duration::from_secs(2), cmd.status()).await {
+                Ok(Ok(s)) => s.success(),
+                _ => false,
+            };
+            if ok {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// Sleeps; replaced by a recording fake in tests.
+#[async_trait::async_trait]
+pub trait Clock: Send + Sync {
+    /// Wait for `d`.
+    async fn sleep(&self, d: Duration);
+}
+
+/// Real clock.
+pub struct TokioClock;
+
+#[async_trait::async_trait]
+impl Clock for TokioClock {
+    async fn sleep(&self, d: Duration) {
+        tokio::time::sleep(d).await;
+    }
+}
+
+/// Exclusive advisory lock on the bridge store; released on drop.
+#[derive(Debug)]
+pub struct StoreLock {
+    // Held only so the OS lock lives as long as this value.
+    _file: std::fs::File,
+}
+
+impl StoreLock {
+    /// Try to take the lock at `path` (parent created owner-only).
+    /// `Ok(None)` means another holder has it.
+    pub fn try_acquire(path: &Path) -> io::Result<Option<Self>> {
+        if let Some(dir) = path.parent() {
+            ensure_private_dir(dir)?;
+        }
+        let mut o = std::fs::OpenOptions::new();
+        o.create(true).truncate(false).write(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+        let f = o.open(path)?;
+        match f.try_lock() {
+            Ok(()) => Ok(Some(Self { _file: f })),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+            Err(std::fs::TryLockError::Error(e)) => Err(e),
+        }
+    }
+}
+
 /// Real spawner built on `tokio::process`.
 pub struct TokioSpawner;
 
@@ -325,6 +426,14 @@ impl Spawner for TokioSpawner {
     }
 }
 
+/// The store lock file: next to `store/`, in the bridge's working directory.
+pub fn lock_path(bridge_store: &Path) -> PathBuf {
+    bridge_store
+        .parent()
+        .unwrap_or(bridge_store)
+        .join(LOCK_NAME)
+}
+
 /// Create `dir` (and parents) owner-only if missing.
 pub fn ensure_private_dir(dir: &Path) -> io::Result<()> {
     let mut b = std::fs::DirBuilder::new();
@@ -362,6 +471,8 @@ pub struct Supervisor {
     started: AtomicBool,
     /// Delay scale for tests (1.0 in the app).
     delays: Mutex<Option<Duration>>,
+    systemd: Mutex<Arc<dyn Systemd>>,
+    clock: Mutex<Arc<dyn Clock>>,
 }
 
 impl Default for Supervisor {
@@ -384,7 +495,19 @@ impl Supervisor {
             finished: CancellationToken::new(),
             started: AtomicBool::new(false),
             delays: Mutex::new(None),
+            systemd: Mutex::new(Arc::new(SystemctlCheck::default())),
+            clock: Mutex::new(Arc::new(TokioClock)),
         }
+    }
+
+    /// Replace the systemd check (tests).
+    pub fn set_systemd(&self, s: Arc<dyn Systemd>) {
+        *self.systemd.lock() = s;
+    }
+
+    /// Replace the clock used for the auto-mode re-checks (tests).
+    pub fn set_clock(&self, c: Arc<dyn Clock>) {
+        *self.clock.lock() = c;
     }
 
     /// Replace every restart delay with `d` (tests only).
@@ -437,12 +560,68 @@ impl Supervisor {
             return;
         }
         let (port, local) = cfg.addr.as_ref().map_or((0, false), |a| (a.1, a.2));
-        let reachable = local && probe.is_up().await;
         let have_bin = cfg.binary.as_ref().is_some_and(|b| b.is_file());
+        if cfg.mode == BridgeMode::Auto && local && have_bin {
+            let sd = self.systemd.lock().clone();
+            if sd.bridge_unit_present().await {
+                tracing::info!(
+                    unit = SYSTEMD_UNIT,
+                    "bridge is managed by systemd; not spawning"
+                );
+                self.set(
+                    SupervisorState::External,
+                    None,
+                    Some(format!("Managed by the systemd user unit {SYSTEMD_UNIT}.")),
+                );
+                return;
+            }
+        }
+        let mut reachable = local && probe.is_up().await;
+        if cfg.mode == BridgeMode::Auto && local && have_bin {
+            // A bridge that is still starting may not answer yet.
+            let clock = self.clock.lock().clone();
+            for _ in 1..RECHECKS {
+                if reachable {
+                    break;
+                }
+                clock.sleep(RECHECK_GAP).await;
+                reachable = probe.is_up().await;
+            }
+        }
         let d = decide(cfg.mode, local, reachable, have_bin);
         tracing::info!(?d, mode = ?cfg.mode, reachable, have_bin, "bridge supervisor decision");
         let (state, detail) = match d {
-            Decision::Spawn => return self.supervise(cfg, port, spawner, on_issue).await,
+            Decision::Spawn => {
+                let lock = match StoreLock::try_acquire(&lock_path(&cfg.bridge_store)) {
+                    Ok(Some(l)) => l,
+                    Ok(None) => {
+                        let (st, why) = if cfg.mode == BridgeMode::Bundled {
+                            (
+                                SupervisorState::Error,
+                                "Another bridge already holds this store (lock held); stop it or set the bridge mode to Auto or External.",
+                            )
+                        } else {
+                            (
+                                SupervisorState::External,
+                                "Another wa-desk or bridge holds the store lock.",
+                            )
+                        };
+                        self.set(st, None, Some(why.to_string()));
+                        return;
+                    }
+                    Err(e) => {
+                        self.set(
+                            SupervisorState::Error,
+                            None,
+                            Some(format!("Cannot take the store lock: {e}")),
+                        );
+                        return;
+                    }
+                };
+                return self
+                    .supervise(cfg, port, spawner, probe, on_issue, lock)
+                    .await;
+            }
             Decision::External => (SupervisorState::External, None),
             Decision::Disabled if cfg.mode == BridgeMode::External => {
                 (SupervisorState::Disabled, None)
@@ -470,7 +649,9 @@ impl Supervisor {
         cfg: Config,
         port: u16,
         spawner: Arc<dyn Spawner>,
+        probe: Arc<dyn Probe>,
         on_issue: IssueFn,
+        lock: StoreLock,
     ) {
         let Some(binary) = cfg.binary.clone() else {
             return;
@@ -490,6 +671,8 @@ impl Supervisor {
         };
         let log = Arc::new(RotatingLog::new(cfg.logs.join(LOG_NAME), LOG_CAP));
         let mut policy = RestartPolicy::default();
+        let lock_file = lock_path(&cfg.bridge_store);
+        let mut lock = Some(lock);
         loop {
             let started = Instant::now();
             let outcome = match ensure_private_dir(&spec.cwd) {
@@ -520,6 +703,7 @@ impl Supervisor {
                 on_issue("The WhatsApp bridge keeps crashing", &detail);
                 return;
             };
+            drop(lock.take());
             self.status.lock().restarts += 1;
             self.set(SupervisorState::Crashed, None, Some(reason));
             let delay = (*self.delays.lock()).unwrap_or(delay);
@@ -529,6 +713,27 @@ impl Supervisor {
                     return;
                 }
                 () = tokio::time::sleep(delay) => {}
+            }
+            // Someone else may have taken over while we waited: never run two
+            // bridges on one store.
+            if probe.is_up().await {
+                self.set(
+                    SupervisorState::External,
+                    None,
+                    Some("Another bridge now answers on the bridge port.".into()),
+                );
+                return;
+            }
+            match StoreLock::try_acquire(&lock_file) {
+                Ok(Some(l)) => lock = Some(l),
+                _ => {
+                    self.set(
+                        SupervisorState::External,
+                        None,
+                        Some("Another process now holds the store lock.".into()),
+                    );
+                    return;
+                }
             }
         }
     }
