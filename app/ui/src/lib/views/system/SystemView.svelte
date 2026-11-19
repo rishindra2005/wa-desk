@@ -1,6 +1,7 @@
 <script lang="ts">
   import BridgeCard from "./BridgeCard.svelte";
   import OverviewCard from "./OverviewCard.svelte";
+  import McpLine from "./McpLine.svelte";
   import JobsPanel from "./JobsPanel.svelte";
   import LogsViewer from "./LogsViewer.svelte";
   import IssuesPanel from "./IssuesPanel.svelte";
@@ -25,6 +26,7 @@
       <BridgeCard />
       <OverviewCard />
     </div>
+    <McpLine />
     <section class="card flex items-center gap-4 p-4" aria-labelledby="names-title">
       <div class="min-w-0 flex-1">
         <h2 id="names-title" class="text-[15px] font-semibold">Chat names</h2>

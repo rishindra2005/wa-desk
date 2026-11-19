@@ -1191,6 +1191,20 @@ impl AppCore {
                 "Folder must be an absolute path: {bad}"
             )));
         }
+        if s.mcp_port < Settings::MCP_PORT_MIN {
+            return Err(AppError::invalid(format!(
+                "MCP port must be between {} and 65535",
+                Settings::MCP_PORT_MIN
+            )));
+        }
+        let bridge_port = url::Url::parse(&self.paths.bridge_url)
+            .ok()
+            .and_then(|u| u.port_or_known_default());
+        if bridge_port == Some(s.mcp_port) {
+            return Err(AppError::invalid(
+                "The MCP port must differ from the bridge port",
+            ));
+        }
         let db = self.db.clone();
         let engine = self.engine();
         let mut s2 = s.clone();

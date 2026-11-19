@@ -8,6 +8,7 @@
   import { app } from "../../state/app.svelte";
   import { toasts } from "../../state/toasts.svelte";
   import { pickFolder } from "../../platform";
+  import McpSection from "./McpSection.svelte";
 
   let draft = $state<Settings | null>(null);
   let saving = $state(false);
@@ -111,6 +112,8 @@
             Takes effect the next time wa-desk starts.
           </p>
         </section>
+
+        <McpSection bind:draft />
 
         <section class="card space-y-4 p-5" aria-labelledby="s-send">
           <h2 id="s-send" class="text-[15px] font-semibold">Sending</h2>

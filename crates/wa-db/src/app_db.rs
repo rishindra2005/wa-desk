@@ -859,6 +859,9 @@ mod tests {
         let s = db.get_settings().unwrap();
         assert_eq!(s.theme, Theme::Light);
         assert_eq!(s.backfill_days, 30);
+        // Settings saved before the MCP server existed get its defaults: on, 8771.
+        assert!(s.mcp_enabled);
+        assert_eq!(s.mcp_port, 8771);
     }
 
     #[test]

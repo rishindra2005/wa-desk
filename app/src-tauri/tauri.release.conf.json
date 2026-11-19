@@ -3,6 +3,12 @@
     "beforeBuildCommand": "node -e \"\""
   },
   "bundle": {
-    "externalBin": ["binaries/wa-bridge"]
+    "externalBin": ["binaries/wa-bridge"],
+    "resources": {
+      "../../bridge/whatsapp-mcp-server/*.py": "whatsapp-mcp-server/",
+      "../../bridge/whatsapp-mcp-server/pyproject.toml": "whatsapp-mcp-server/pyproject.toml",
+      "../../bridge/whatsapp-mcp-server/uv.lock": "whatsapp-mcp-server/uv.lock",
+      "../../bridge/whatsapp-mcp-server/.python-version": "whatsapp-mcp-server/.python-version"
+    }
   }
 }

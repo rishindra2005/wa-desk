@@ -67,6 +67,22 @@ Release builds ship the WhatsApp bridge (the Go program from the `bridge/` submo
 - A bridge URL that does not point at this computer is never started for.
 - `WA_DESK_BRIDGE_BIN` overrides the sidecar path (development).
 
+## MCP server
+
+wa-desk can run an MCP (Model Context Protocol) server, so AI assistants that support MCP can read and send your WhatsApp messages. It is the Python server from the `bridge/whatsapp-mcp-server` submodule. It is **on by default** and local-only (it listens on `127.0.0.1`). Turn it off in Settings, "MCP server", if you don't use it.
+
+- **URL.** `http://127.0.0.1:8771/mcp` (streamable HTTP). Settings shows the URL with a copy button; the port is configurable.
+- **Point a client at it.** In your MCP client's configuration, add a server of type "streamable HTTP" (some clients call it "http") with that URL. No token or credentials are needed on your side. Clients that only speak stdio need a stdio-to-HTTP proxy.
+- **Needs `uv`.** The server runs with [uv](https://docs.astral.sh/uv/), which wa-desk looks for on `PATH`, then in `~/.local/bin` and `~/.cargo/bin` (on Windows `%USERPROFILE%\.local\bin` and `%USERPROFILE%\.cargo\bin`). wa-desk never installs anything itself: if `uv` is missing, Settings and System say "Needs uv". uv may also download a suitable Python if the system has none.
+- **First run.** The first start creates a Python environment and installs the server's dependencies (needs network, can take a minute). The status shows "Starting (first run installs dependencies)". The environment lives in the app cache (`~/.cache/wa-desk/mcp-venv/` on Linux), so the install folder can stay read-only.
+- **Applies immediately.** Changing the switch or the port starts, stops or restarts the server at once; no relaunch is needed.
+- **Never two on one port.** If an MCP server already answers on the port (for example one you run yourself), wa-desk uses it and starts nothing ("external"). If another program holds the port, the state is "port in use"; pick another port.
+- **Restarts.** If it exits unexpectedly it is restarted after 1 s, 2 s, 5 s and so on, up to 60 s. After repeated fast crashes wa-desk gives up and records an issue.
+- **Quit.** **Quit wa-desk** stops it, and so does turning it off. Closing the window only hides it to the tray, so it keeps running.
+- **Log.** `mcp.log` in the logs folder, rotated at 5 MB. Message text and the bridge token are not written by wa-desk; the server reads the token from the bridge store itself.
+- **What it can do.** Whatever you allow an MCP client to do with it: read chats and messages, and send messages and files through the bridge. Only connect clients you trust.
+- Development: `WA_DESK_MCP_DIR` overrides the server source folder; otherwise debug builds use `bridge/whatsapp-mcp-server` in the checkout.
+
 ## First run
 
 The search index is built once, in the background. For about 115k messages this takes roughly 10 seconds. Chats and media work meanwhile. Search becomes available when the index is ready. After that the index is updated live as messages arrive.
@@ -138,6 +154,7 @@ Paths follow the XDG directories on your system.
 | `WA_DESK_READ_ONLY=1` | Disable all sends, reactions, receipts and automations |
 | `WA_DESK_LOG` | Log filter, `tracing` `EnvFilter` syntax, e.g. `wa_desk_lib=debug` |
 | `WA_DESK_BRIDGE_URL` | Bridge base URL (default `http://127.0.0.1:8080`) |
+| `WA_DESK_MCP_DIR` | Folder of the MCP server source (default: bundled with release builds, `bridge/whatsapp-mcp-server` in a development checkout) |
 | `WA_DESK_BRIDGE_BIN` | Path of the bundled bridge binary (default: `wa-bridge` next to the executable) |
 | `WEBKIT_DISABLE_DMABUF_RENDERER` | Set to `1` by the app unless already set (see Troubleshooting) |
 

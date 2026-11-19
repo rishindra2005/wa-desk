@@ -11,6 +11,7 @@ pub mod bridge_supervisor;
 pub mod clipboard;
 pub mod commands;
 pub mod core;
+pub mod mcp_supervisor;
 pub mod media_url;
 #[cfg(target_os = "linux")]
 pub mod notify_dbus;
@@ -236,6 +237,7 @@ fn setup(
         tracing::warn!(error = %e, "could not apply the saved zoom");
     }
     start_bridge_supervisor(app, &core, &sup_paths, settings.bridge_mode);
+    start_mcp_supervisor(app, &core, &sup_paths, &settings);
     let hidden = start_hidden_arg || settings.start_hidden;
     if !hidden {
         tray::show_main(&handle);
@@ -276,6 +278,29 @@ fn start_bridge_supervisor(
     tauri::async_runtime::spawn(async move {
         sup.run(cfg, Arc::new(TokioSpawner), probe, on_issue).await;
     });
+}
+
+/// Create the MCP supervisor and apply the saved settings in the background
+/// (after the bridge decision; never blocks the window).
+fn start_mcp_supervisor(
+    app: &tauri::App<Wry>,
+    core: &Arc<AppCore>,
+    paths: &Paths,
+    settings: &wa_core::types::Settings,
+) {
+    let core = core.clone();
+    let on_issue: bridge_supervisor::IssueFn = Arc::new(move |title, detail| {
+        core.record_issue(wa_core::ErrorKind::External, "app.mcp", title, detail);
+    });
+    let resources = app.path().resource_dir().ok();
+    let sup = Arc::new(mcp_supervisor::McpSupervisor::for_app(
+        paths.clone(),
+        resources,
+        on_issue,
+    ));
+    app.manage(sup.clone());
+    let (enabled, port) = (settings.mcp_enabled, settings.mcp_port);
+    tauri::async_runtime::spawn(async move { sup.apply(enabled, port).await });
 }
 
 /// Entry point.
@@ -369,6 +394,7 @@ pub fn run() {
             commands::mark_read,
             commands::connection_status,
             commands::bridge_supervisor,
+            commands::mcp_status,
             commands::reconnect,
             commands::start_job,
             commands::cancel_job,
@@ -419,6 +445,9 @@ pub fn run() {
             if let Some(sup) = app.try_state::<Arc<bridge_supervisor::Supervisor>>() {
                 // Quit (tray or otherwise) ends here; closing the window never does.
                 tauri::async_runtime::block_on(sup.stop());
+            }
+            if let Some(mcp) = app.try_state::<Arc<mcp_supervisor::McpSupervisor>>() {
+                tauri::async_runtime::block_on(mcp.shutdown());
             }
             let sd = app.state::<Shutdown>();
             sd.token.cancel();
