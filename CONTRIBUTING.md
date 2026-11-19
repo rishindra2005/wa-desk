@@ -69,6 +69,13 @@ The Go bridge lives in the `bridge/` git submodule ([wa-bridge](https://github.c
 - Only release builds bundle it: `tauri.release.conf.json` adds `bundle.externalBin`. `tauri.conf.json` does not, so dev builds and tests never need Go. Run `scripts/build-bridge.sh` before `cargo tauri build --config tauri.release.conf.json`.
 - The supervisor is `app/src-tauri/src/bridge_supervisor.rs`. Its tests use fake binaries and temp dirs, never a real bridge or store. In `cargo tauri dev` there is no sidecar unless you set `WA_DESK_BRIDGE_BIN`; never point it at your real store.
 
+## The MCP server
+The Python MCP server lives in the same submodule (`bridge/whatsapp-mcp-server`); do not edit it from this repo either.
+- Supervisor: `app/src-tauri/src/mcp_supervisor.rs`. It reuses the bridge supervisor's `Spawner`/`RunningChild`/`RotatingLog`/`RestartPolicy`. `Settings.mcp_enabled` and `mcp_port` apply at runtime: `set_settings` calls `McpSupervisor::apply`, which starts, stops or restarts the child. App exit calls `shutdown`.
+- It runs `uv run --project <source> --frozen <source>/main.py` with cwd `<cache>/mcp` and `UV_PROJECT_ENVIRONMENT=<cache>/mcp-venv`, so the (possibly read-only) source folder is never written to. Env: `WHATSAPP_MCP_TRANSPORT=http`, `WHATSAPP_MCP_HOST=127.0.0.1`, `WHATSAPP_MCP_PORT`, the store's db paths, `WHATSAPP_API_URL` (bridge URL + `/api`) and `WHATSAPP_MEDIA_ROOTS` (the outbox). Never put the bridge token in the environment or a log line; the server reads `.bridge-token` next to `whatsapp.db` itself.
+- Source lookup: `WA_DESK_MCP_DIR`, then the Tauri resources (`tauri.release.conf.json` adds `bundle.resources` with just the `.py` files, `pyproject.toml`, `uv.lock` and `.python-version`, so `.venv`, `__pycache__` and tests are never bundled), then, in debug builds, the submodule checkout. `uv` is looked up on `PATH`, `~/.local/bin` and `~/.cargo/bin`; nothing is ever installed automatically.
+- Tests (`app/src-tauri/tests/mcp_supervisor.rs`) use fake processes and ports. The one real-process test uses a fake `uv` shell script that runs a tiny `python3` HTTP listener, and is skipped without `python3`. Never point a test or a dev run at your real store.
+
 ## Running things
 - Rust: `cargo test --workspace`, `cargo nextest run --workspace`.
 - UI dev against mocks: `cd app/ui && npm run dev` (mock IPC is on when `window.__TAURI_INTERNALS__` is absent).

@@ -17,6 +17,7 @@ import type { SearchHit } from "./bindings/SearchHit";
 import type { ChatSummary } from "./bindings/ChatSummary";
 import type { ConnectionState } from "./bindings/ConnectionState";
 import type { SupervisorStatus } from "./bindings/SupervisorStatus";
+import type { McpStatus } from "./bindings/McpStatus";
 import type { DbChangedEvent } from "./bindings/DbChangedEvent";
 import type { NotificationOpenEvent } from "./bindings/NotificationOpenEvent";
 import type { ErrorKind } from "./bindings/ErrorKind";
@@ -167,6 +168,8 @@ export const connectionStatus = () => call<ConnectionState>("connection_status")
 export const reconnect = () => call<ConnectionState>("reconnect");
 /** What the bundled-bridge supervisor is doing (running pid, external, not installed, crashed). */
 export const bridgeSupervisor = () => call<SupervisorStatus>("bridge_supervisor");
+/** What the MCP server supervisor is doing (state, pid, URL, detail, restarts). */
+export const mcpStatus = () => call<McpStatus>("mcp_status");
 export const startJob = (spec: JobSpec) => call<JobRecord>("start_job", { spec });
 export const cancelJob = (id: number) => call<void>("cancel_job", { id });
 export const listJobs = (limit: number) => call<JobRecord[]>("list_jobs", { limit });
@@ -190,7 +193,7 @@ export const COMMANDS = [
   "ensure_media", "preview_doc", "open_media_external", "save_media_as", "export_media_files", "open_path", "reveal_path", "get_profile",
   "chat_stats", "list_links", "set_starred", "list_starred", "export_chat", "forward_messages", "copy_messages_text",
   "refresh_chat_names", "archive_count", "set_archived", "set_pinned", "set_muted", "resync_chat_state", "send_message", "stage_pasted_file", "copy_image", "set_zoom", "react", "mark_read", "list_calls", "reject_call",
-  "connection_status", "bridge_supervisor", "reconnect", "start_job", "cancel_job", "list_jobs", "list_rules", "save_rule",
+  "connection_status", "bridge_supervisor", "mcp_status", "reconnect", "start_job", "cancel_job", "list_jobs", "list_rules", "save_rule",
   "delete_rule", "test_rule", "automation_log", "set_automation_enabled", "query_logs", "list_issues",
   "resolve_issue", "clear_resolved_issues", "export_issue_bundle", "get_settings", "set_settings",
 ] as const;

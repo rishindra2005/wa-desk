@@ -48,6 +48,7 @@ Calling conventions:
 | `mark_read` | `{ chatJid }` | `void`: the UI calls it when a chat is opened, and again while it is open in a focused window (new messages, window focus). It always withdraws the chat's desktop notifications first, even when the chat is already read, in read-only mode or with the bridge offline |
 | `connection_status` | none | `ConnectionState` |
 | `bridge_supervisor` | none | `SupervisorStatus`: what the bundled-bridge supervisor is doing (`starting`, `external` (a bridge not started by wa-desk: one answers on the URL, the systemd user unit `whatsapp-bridge.service` is enabled/active in `auto` mode, or the store lock `runtime/.wa-desk-bridge.lock` is held elsewhere; `detail` says which), `disabled`, `not_installed`, `running` + `pid`, `crashed`, `gave_up`, `error`, `stopped`), the last error in `detail`, and `restarts` since start |
+| `mcp_status` | none | `McpStatus` `{state, pid, url, detail, restarts}`: what the MCP server supervisor is doing. `state` is `disabled` (setting off), `starting` (`detail` says "first run installs dependencies" while the Python environment is built), `running` + `pid`, `crashed`, `gave_up`, `needs_uv` (`uv` not found; `detail` says to install it from https://docs.astral.sh/uv/), `not_installed` (no server source in this build), `port_busy` (another program holds the port), `external` (an MCP server not started by wa-desk already answers there), `error`, `stopped`. `url` is always `http://127.0.0.1:<mcp_port>/mcp` |
 | `reconnect` | none | `ConnectionState` |
 | `start_job` | `{ spec: JobSpec }` | `JobRecord` |
 | `cancel_job` | `{ id: number }` | `void` |
@@ -64,7 +65,7 @@ Calling conventions:
 | `clear_resolved_issues` | none | `number` |
 | `export_issue_bundle` | `{ ids: number[] \| null }` | `string`: path of the zip in the exports folder |
 | `get_settings` | none | `Settings` |
-| `set_settings` | `{ settings: Settings }` | `Settings`. `Settings.bridge_mode` (`auto` \| `external` \| `bundled`, default `auto`) decides who runs the bridge and is read at app start: `auto` uses a bridge that already answers on the bridge URL and otherwise spawns the bundled `wa-bridge` sidecar; `external` never spawns; `bundled` always spawns and reports an `error` state if the port is taken |
+| `set_settings` | `{ settings: Settings }` | `Settings`. `Settings.bridge_mode` (`auto` \| `external` \| `bundled`, default `auto`) decides who runs the bridge and is read at app start: `auto` uses a bridge that already answers on the bridge URL and otherwise spawns the bundled `wa-bridge` sidecar; `external` never spawns; `bundled` always spawns and reports an `error` state if the port is taken. `Settings.mcp_enabled` (default `true`) and `Settings.mcp_port` (default `8771`, 1024 to 65535 and not the bridge port, else `invalid`) control the bundled MCP server and, unlike `bridge_mode`, apply immediately: `set_settings` starts, stops or restarts the server before it returns (it does not wait for the server to answer; poll `mcp_status`) |
 
 A message with several attachments is sent by the UI as one `send_message` per file, strictly in order: the typed text is the caption of the first file only (and only the first quotes a reply). A failed file is marked failed with a Retry button and does not stop the others.
 

@@ -728,6 +728,35 @@ async fn settings_roundtrip_and_autostart() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn mcp_settings_default_on_and_are_validated() {
+    let h = harness().await;
+    let s = h.core.get_settings().await.unwrap();
+    assert!(s.mcp_enabled);
+    assert_eq!(s.mcp_port, 8771);
+
+    let mut ok = s.clone();
+    ok.mcp_enabled = false;
+    ok.mcp_port = 9123;
+    let out = h.core.set_settings(ok).await.unwrap();
+    assert!(!out.mcp_enabled);
+    assert_eq!(h.core.get_settings().await.unwrap().mcp_port, 9123);
+
+    let bridge_port = url::Url::parse(&h.core.paths().bridge_url)
+        .unwrap()
+        .port()
+        .unwrap();
+    for port in [0u16, 80, 1023, bridge_port] {
+        let mut bad = s.clone();
+        bad.mcp_port = port;
+        assert_eq!(
+            h.core.set_settings(bad).await.unwrap_err().kind,
+            ErrorKind::Invalid,
+            "port {port}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn issues_lifecycle_emits_event() {
     use wa_core::traits::IssueSink;
     let h = harness().await;

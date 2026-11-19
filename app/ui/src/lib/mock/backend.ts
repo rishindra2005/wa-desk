@@ -37,6 +37,8 @@ import type { SearchResults } from "../bindings/SearchResults";
 import type { SendReq } from "../bindings/SendReq";
 import type { Settings } from "../bindings/Settings";
 import type { SupervisorStatus } from "../bindings/SupervisorStatus";
+import type { McpStatus } from "../bindings/McpStatus";
+import { mcpUrl } from "../views/settings/mcp";
 import { MAX_PINS, sortChats } from "../utils/chatstate";
 import type { EventMap, EventName } from "../api";
 import type { ChatRef } from "../bindings/ChatRef";
@@ -116,6 +118,8 @@ export class MockBackend {
   readonly markedRead: string[] = [];
   /** What `bridge_supervisor` returns; tests change it to drive the System card. */
   supervisor: SupervisorStatus = { state: "running", pid: 4242, detail: null, restarts: 0 };
+  /** What `mcp_status` returns; `set_settings` starts, stops and restarts it like the real app. */
+  mcp: McpStatus = { state: "running", pid: 4343, url: mcpUrl(8771), detail: null, restarts: 0 };
   private emitFn: Emit = () => {};
   private timers = new Set<ReturnType<typeof setTimeout>>();
   private intervals = new Set<ReturnType<typeof setInterval>>();
@@ -152,10 +156,25 @@ export class MockBackend {
       link_extra_dirs: ["/home/user/Pictures/WhatsApp Images"],
       zoom_percent: 100,
       bridge_mode: "auto",
+      mcp_enabled: true,
+      mcp_port: 8771,
     };
     this.conn = this.connState("connecting", "Connecting to the WhatsApp bridge…");
     setAvatarResolver((jid) => this.avatarFor(jid));
     this.indexed = Math.floor(this.totalMessages() * 0.7);
+  }
+
+  /** Mirror the real supervisor: off stops, on starts, a new port restarts. */
+  private applyMcp(s: Settings): void {
+    const was = this.settings;
+    const url = mcpUrl(s.mcp_port);
+    if (!s.mcp_enabled) {
+      this.mcp = { state: "disabled", pid: null, url, detail: null, restarts: 0 };
+    } else if (!was.mcp_enabled || this.mcp.state === "disabled") {
+      this.mcp = { state: "running", pid: 4343, url, detail: null, restarts: 0 };
+    } else if (was.mcp_port !== s.mcp_port) {
+      this.mcp = { ...this.mcp, pid: (this.mcp.pid ?? 4343) + 1, url };
+    }
   }
 
   /** Wire the event sink and start background simulation. */
@@ -346,6 +365,7 @@ export class MockBackend {
       }
       case "connection_status": return this.conn;
       case "bridge_supervisor": return this.supervisor;
+      case "mcp_status": return this.mcp;
       case "reconnect": return this.reconnect();
       case "start_job": return this.startJob((a as { spec: JobSpec }).spec);
       case "cancel_job": return this.cancelJob((a as { id: number }).id);
@@ -393,6 +413,8 @@ export class MockBackend {
       case "set_settings": {
         const s = (a as { settings: Settings }).settings;
         if (s.backfill_days < 1 || s.backfill_days > 3650) fail("invalid", "Backfill days must be between 1 and 3650");
+        if (!Number.isInteger(s.mcp_port) || s.mcp_port < 1024 || s.mcp_port > 65535) fail("invalid", "MCP port must be between 1024 and 65535");
+        this.applyMcp(s);
         this.settings = s;
         return s;
       }

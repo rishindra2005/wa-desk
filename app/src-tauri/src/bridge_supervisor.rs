@@ -219,7 +219,9 @@ async fn pump<R: AsyncRead + Unpin>(r: R, log: Arc<RotatingLog>) {
 pub struct SpawnSpec {
     /// Executable to run.
     pub program: PathBuf,
-    /// Working directory (`<bridge_store>/..`).
+    /// Command-line arguments.
+    pub args: Vec<String>,
+    /// Working directory (`<bridge_store>/..` for the bridge).
     pub cwd: PathBuf,
     /// Extra environment.
     pub env: Vec<(String, String)>,
@@ -407,7 +409,8 @@ impl RunningChild for TokioChild {
 impl Spawner for TokioSpawner {
     fn spawn(&self, spec: &SpawnSpec, log: Arc<RotatingLog>) -> io::Result<Box<dyn RunningChild>> {
         let mut cmd = tokio::process::Command::new(&spec.program);
-        cmd.current_dir(&spec.cwd)
+        cmd.args(&spec.args)
+            .current_dir(&spec.cwd)
             .envs(spec.env.iter().map(|(k, v)| (k, v)))
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
@@ -662,6 +665,7 @@ impl Supervisor {
             .map_or_else(|| cfg.bridge_store.clone(), Path::to_path_buf);
         let spec = SpawnSpec {
             program: binary,
+            args: Vec::new(),
             cwd,
             env: vec![
                 ("WHATSAPP_BRIDGE_PORT".into(), port.to_string()),

@@ -26,4 +26,12 @@ zoom_percent: number,
 /**
  * Who runs the WhatsApp bridge. Applied at the next app start.
  */
-bridge_mode: BridgeMode, };
+bridge_mode: BridgeMode, 
+/**
+ * Run the bundled MCP server (local only). Applied immediately.
+ */
+mcp_enabled: boolean, 
+/**
+ * TCP port of the MCP server on 127.0.0.1 (1024 to 65535). Applied immediately.
+ */
+mcp_port: number, };

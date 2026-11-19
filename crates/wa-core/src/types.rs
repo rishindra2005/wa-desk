@@ -1155,6 +1155,10 @@ pub struct Settings {
     pub zoom_percent: u32,
     /// Who runs the WhatsApp bridge. Applied at the next app start.
     pub bridge_mode: BridgeMode,
+    /// Run the bundled MCP server (local only). Applied immediately.
+    pub mcp_enabled: bool,
+    /// TCP port of the MCP server on 127.0.0.1 (1024 to 65535). Applied immediately.
+    pub mcp_port: u16,
 }
 
 impl Settings {
@@ -1162,6 +1166,15 @@ impl Settings {
     pub const ZOOM_MIN: u32 = 50;
     /// Highest allowed app zoom, in percent.
     pub const ZOOM_MAX: u32 = 200;
+    /// Default `mcp_port`.
+    pub const DEFAULT_MCP_PORT: u16 = 8771;
+    /// Lowest allowed `mcp_port` (no privileged ports).
+    pub const MCP_PORT_MIN: u16 = 1024;
+
+    /// URL an MCP client connects to for `port`.
+    pub fn mcp_url(port: u16) -> String {
+        format!("http://127.0.0.1:{port}/mcp")
+    }
 
     /// Clamp a zoom request into the allowed range.
     pub fn clamp_zoom(percent: u32) -> u32 {
@@ -1183,8 +1196,55 @@ impl Default for Settings {
             link_extra_dirs: Vec::new(),
             zoom_percent: 100,
             bridge_mode: BridgeMode::Auto,
+            mcp_enabled: true,
+            mcp_port: Self::DEFAULT_MCP_PORT,
         }
     }
+}
+
+/// What the MCP server supervisor is doing (Settings and System views).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum McpState {
+    /// `mcp_enabled` is off: nothing runs.
+    Disabled,
+    /// The server process is starting (the first run installs dependencies).
+    Starting,
+    /// The server answers on the URL (`pid` is set).
+    Running,
+    /// It exited; waiting to restart (`detail` = last error).
+    Crashed,
+    /// Too many fast crashes; wa-desk stopped restarting it.
+    GaveUp,
+    /// `uv` was not found; `detail` says how to install it.
+    NeedsUv,
+    /// This install has no MCP server source.
+    NotInstalled,
+    /// Something that is not our server holds the port.
+    PortBusy,
+    /// An MCP server not started by wa-desk already answers on the port.
+    External,
+    /// It cannot start; see `detail`.
+    Error,
+    /// Stopped because the app is quitting.
+    Stopped,
+}
+
+/// Snapshot returned by `mcp_status`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct McpStatus {
+    pub state: McpState,
+    /// Process id while the child runs.
+    #[ts(type = "number | null")]
+    pub pid: Option<u32>,
+    /// URL for MCP clients (`http://127.0.0.1:<port>/mcp`).
+    pub url: String,
+    /// Last error or explanation, if any.
+    pub detail: Option<String>,
+    /// Restarts since the app started.
+    pub restarts: u32,
 }
 
 // ---------- app overview / events ----------

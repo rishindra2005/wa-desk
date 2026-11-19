@@ -7,10 +7,10 @@ use tauri::State;
 use wa_core::AppError;
 use wa_core::types::{
     AutomationEvent, CallQuery, CallRecord, ChatQuery, ChatStats, ChatSummary, ConnectionState,
-    ExportReq, ForwardReq, Issue, JobRecord, JobSpec, LinkItem, LogFilter, LogLine, MediaExportReq,
-    MediaExportSummary, MediaItem, MediaQuery, MediaRef, Message, MessagesQuery, Overview, Page,
-    PreviewRef, Profile, ReactReq, Rule, RuleEval, SearchHit, SearchQuery, SearchResults, SendReq,
-    SendResult, Settings, SupervisorStatus,
+    ExportReq, ForwardReq, Issue, JobRecord, JobSpec, LinkItem, LogFilter, LogLine, McpStatus,
+    MediaExportReq, MediaExportSummary, MediaItem, MediaQuery, MediaRef, Message, MessagesQuery,
+    Overview, Page, PreviewRef, Profile, ReactReq, Rule, RuleEval, SearchHit, SearchQuery,
+    SearchResults, SendReq, SendResult, Settings, SupervisorStatus,
 };
 
 use crate::core::AppCore;
@@ -319,8 +319,21 @@ pub async fn get_settings(core: Core<'_>) -> R<Settings> {
 
 /// `set_settings` (see docs/CONTRACT.md).
 #[tauri::command]
-pub async fn set_settings(core: Core<'_>, settings: Settings) -> R<Settings> {
-    logged("set_settings", core.set_settings(settings).await)
+pub async fn set_settings(
+    core: Core<'_>,
+    mcp: State<'_, Arc<crate::mcp_supervisor::McpSupervisor>>,
+    settings: Settings,
+) -> R<Settings> {
+    let s = logged("set_settings", core.set_settings(settings).await)?;
+    // The MCP server follows its settings right away (no relaunch).
+    mcp.apply(s.mcp_enabled, s.mcp_port).await;
+    Ok(s)
+}
+
+/// `mcp_status` (see docs/CONTRACT.md): what the MCP server supervisor is doing.
+#[tauri::command]
+pub fn mcp_status(mcp: State<'_, Arc<crate::mcp_supervisor::McpSupervisor>>) -> McpStatus {
+    mcp.status()
 }
 
 /// `get_profile` (see docs/CONTRACT.md).
