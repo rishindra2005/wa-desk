@@ -179,7 +179,13 @@ jobs:
         working-directory: bridge/whatsapp-bridge
         run: go test ./...
       - name: MinGW for the Windows cross-build (cgo, go-sqlite3)
-        run: sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
+        timeout-minutes: 10
+        run: |
+          # The runner's default Ubuntu mirror can be very slow; use kernel.org's.
+          sudo sed -i -E 's#mirror\+file:/etc/apt/apt-mirrors.txt|https?://[a-z0-9.-]*archive\.ubuntu\.com/ubuntu/?#http://mirrors.edge.kernel.org/ubuntu/#g' \
+            /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
       - name: Windows cross-build
         working-directory: bridge/whatsapp-bridge
         env:

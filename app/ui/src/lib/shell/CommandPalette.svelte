@@ -20,6 +20,8 @@
 
   let q = $state("");
   let chats = $state<ChatSummary[]>([]);
+  /** The query `chats` was fetched for; results for an older query are never shown. */
+  let chatsFor = $state<string | null>(null);
   let active = $state(0);
   let listEl: HTMLUListElement | undefined = $state();
 
@@ -55,12 +57,17 @@
   ];
 
   const fetchChats = debounce(async (text: string) => {
+    let found: ChatSummary[] = [];
     try {
       const page = await api.listChats({ filter: text || null, kind: "all", unread_only: false, archived: false, cursor: null, limit: text ? 8 : 5 });
-      chats = page.items;
+      found = page.items;
     } catch {
-      chats = [];
+      found = [];
     }
+    // A late answer for an earlier query must not reorder the list under the user.
+    if (text !== q.trim()) return;
+    chats = found;
+    chatsFor = text;
   }, 80);
 
   $effect(() => {
@@ -70,7 +77,8 @@
 
   const items = $derived.by(() => {
     const t = q.trim().toLowerCase();
-    const out: Cmd[] = chats.map((c) => ({ id: `chat:${c.jid}`, label: c.name, group: "Chats", chat: c, run: () => app.openChat(c.jid) }));
+    const visibleChats = chatsFor === q.trim() ? chats : [];
+    const out: Cmd[] = visibleChats.map((c) => ({ id: `chat:${c.jid}`, label: c.name, group: "Chats", chat: c, run: () => app.openChat(c.jid) }));
     const words = t.split(/\s+/).filter(Boolean);
     out.push(...staticCmds.filter((c) => words.every((w) => `${c.group} ${c.label}`.toLowerCase().includes(w))));
     // Full-text search is the fallback, after exact chat/command matches.
