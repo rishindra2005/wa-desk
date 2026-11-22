@@ -4,9 +4,10 @@
 
 use std::future::Future;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
+use wa_core::transient::{FailureTracker, is_transient_kind};
 use wa_core::{AppError, ErrorKind, Result};
 
 use crate::core::AppCore;
@@ -47,6 +48,113 @@ where
         .map_err(|e| AppError::internal("background task panicked").with_detail(e.to_string()))?
 }
 
+/// Tasks whose already-open timeout issues (from before transient timeouts
+/// stopped raising issues) are resolved once their first run succeeds.
+const STALE_TIMEOUT_CLEANUP: &[&str] = &["watcher", "index"];
+
+/// Per-task failure state used by [`on_failure`] and [`on_success`].
+#[derive(Debug, Default)]
+pub struct TaskHealth {
+    tracker: FailureTracker,
+    /// Kinds of issues this task raised during the current failure streak.
+    raised: Vec<ErrorKind>,
+    cleaned: bool,
+}
+
+impl TaskHealth {
+    /// Consecutive failures so far.
+    pub fn attempts(&self) -> u32 {
+        self.tracker.attempts()
+    }
+}
+
+/// Handle one failed run at `now`.
+///
+/// Transient errors (timeouts, busy) are logged at DEBUG and only escalate to
+/// WARN plus an issue once the streak has lasted 60 s over 5 attempts. Any
+/// other error warns and raises an issue on its first occurrence.
+pub fn on_failure(
+    core: &AppCore,
+    name: &'static str,
+    title: &str,
+    health: &mut TaskHealth,
+    now: Instant,
+    e: &AppError,
+) {
+    let kind = if e.kind == ErrorKind::Cancelled {
+        ErrorKind::Internal
+    } else {
+        e.kind
+    };
+    let attempts_before = health.tracker.attempts();
+    let escalate = health.tracker.failure(now);
+    let attempts = health.tracker.attempts();
+    let raise = if is_transient_kind(kind) {
+        escalate
+    } else {
+        !health.raised.contains(&kind)
+    };
+    if raise {
+        tracing::warn!(task = name, error = %e, attempts, "background task failed; backing off");
+        if !health.raised.contains(&kind) {
+            health.raised.push(kind);
+        }
+        core.record_issue(
+            kind,
+            &format!("app.{name}"),
+            title,
+            e.detail.as_deref().unwrap_or(&e.message),
+        );
+    } else if attempts_before == 0 {
+        tracing::debug!(task = name, error = %e, kind = ?kind, "background task failed; retrying");
+    } else {
+        tracing::debug!(task = name, error = %e, attempts, "background task still failing");
+    }
+}
+
+/// Handle one successful run: resolve issues this task raised and, once per
+/// process, stale timeout issues left by earlier versions.
+pub fn on_success(core: &AppCore, name: &'static str, title: &str, health: &mut TaskHealth) {
+    let source = format!("app.{name}");
+    let (failures, _) = health.tracker.success();
+    let raised = std::mem::take(&mut health.raised);
+    let mut resolved = 0;
+    for kind in &raised {
+        match core.issues().resolve_matching(*kind, &source, title) {
+            Ok(n) => resolved += n,
+            Err(err) => tracing::debug!(task = name, error = %err, "could not resolve issue"),
+        }
+    }
+    if !health.cleaned {
+        health.cleaned = true;
+        if STALE_TIMEOUT_CLEANUP.contains(&name) {
+            match core
+                .issues()
+                .resolve_open_by_source(&source, ErrorKind::Timeout)
+            {
+                Ok(n) if n > 0 => {
+                    tracing::info!(task = name, resolved = n, "resolved stale timeout issues");
+                }
+                Ok(_) => {}
+                Err(err) => tracing::debug!(task = name, error = %err, "stale cleanup failed"),
+            }
+        }
+    }
+    if failures == 0 {
+        return;
+    }
+    if raised.is_empty() {
+        tracing::debug!(task = name, after = failures, "background task recovered");
+    } else {
+        tracing::info!(
+            task = name,
+            after = failures,
+            resolved,
+            "background task recovered"
+        );
+    }
+}
+
 /// Generic resilient loop: run `tick` every `every`, backing off on errors.
 async fn run_loop<F, Fut>(
     core: Arc<AppCore>,
@@ -66,7 +174,7 @@ async fn run_loop<F, Fut>(
         "background loop started"
     );
     let mut delay = initial_delay;
-    let mut failures: u32 = 0;
+    let mut health = TaskHealth::default();
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => break,
@@ -74,31 +182,12 @@ async fn run_loop<F, Fut>(
         }
         match guarded(tick(core.clone())).await {
             Ok(()) => {
-                if failures > 0 {
-                    tracing::info!(task = name, after = failures, "background task recovered");
-                }
-                failures = 0;
+                on_success(&core, name, title, &mut health);
                 delay = every;
             }
             Err(e) => {
-                if failures == 0 {
-                    tracing::warn!(task = name, error = %e, "background task failed; backing off");
-                    let kind = if e.kind == ErrorKind::Cancelled {
-                        ErrorKind::Internal
-                    } else {
-                        e.kind
-                    };
-                    core.record_issue(
-                        kind,
-                        &format!("app.{name}"),
-                        title,
-                        e.detail.as_deref().unwrap_or(&e.message),
-                    );
-                } else {
-                    tracing::debug!(task = name, error = %e, failures, "background task still failing");
-                }
-                failures = failures.saturating_add(1);
-                delay = backoff(every, failures);
+                on_failure(&core, name, title, &mut health, Instant::now(), &e);
+                delay = backoff(every, health.attempts());
             }
         }
     }

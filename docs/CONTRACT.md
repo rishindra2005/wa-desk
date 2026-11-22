@@ -5,6 +5,7 @@ Types are defined in `crates/wa-core/src/types.rs` and exported to `app/ui/src/l
 Calling conventions:
 - JS arguments are **camelCase**; Tauri maps them to the snake_case Rust parameter names.
 - Every command rejects with an `AppError` object `{kind, message, detail?}`.
+- `timeout` and `busy` are transient (`wa_core::transient`). Background tasks log them at debug level and raise an Issue only after the task has failed for 60 s over at least 5 consecutive attempts. A recovered task resolves the Issues it raised.
 
 ## Commands
 

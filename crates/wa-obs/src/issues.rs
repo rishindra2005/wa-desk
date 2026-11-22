@@ -239,6 +239,36 @@ impl IssueStore {
         Ok(())
     }
 
+    /// Resolve the open issue with this kind, source and title (same
+    /// fingerprint as `record_issue`). Returns how many were resolved (0 or 1).
+    pub fn resolve_matching(&self, kind: ErrorKind, source: &str, title: &str) -> Result<u32> {
+        let title = truncate(&redact(title.trim()), MAX_TITLE);
+        let source = truncate(source.trim(), 120);
+        let fp = fingerprint(kind, &source, &title);
+        let n = self
+            .conn
+            .lock()
+            .execute(
+                "UPDATE issues SET status = 'resolved' WHERE fingerprint = ?1 AND status = 'open'",
+                [&fp],
+            )
+            .map_err(db_err)?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
+    /// Resolve every open issue of `kind` raised by `source`; returns how many.
+    pub fn resolve_open_by_source(&self, source: &str, kind: ErrorKind) -> Result<u32> {
+        let n = self
+            .conn
+            .lock()
+            .execute(
+                "UPDATE issues SET status = 'resolved' WHERE source = ?1 AND kind = ?2 AND status = 'open'",
+                params![source.trim(), kind_str(kind)],
+            )
+            .map_err(db_err)?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
     /// Delete all resolved issues; returns how many.
     pub fn clear_resolved(&self) -> Result<u32> {
         let n = self
@@ -386,6 +416,50 @@ mod tests {
         assert_eq!(s.clear_resolved().unwrap(), 1);
         assert!(s.get(i.id).unwrap().is_none());
         assert_eq!(s.resolve(9999).unwrap_err().kind, ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn resolve_matching_and_by_source() {
+        let s = IssueStore::in_memory().unwrap();
+        let (a, _) = s
+            .record_issue(ErrorKind::Timeout, "app.watcher", "Cannot read 5", None)
+            .unwrap();
+        let (b, _) = s
+            .record_issue(ErrorKind::Internal, "app.watcher", "Other", None)
+            .unwrap();
+        let (c, _) = s
+            .record_issue(ErrorKind::Timeout, "app.index", "Index", None)
+            .unwrap();
+        // Wrong kind / source: nothing happens.
+        assert_eq!(
+            s.resolve_matching(ErrorKind::Busy, "app.watcher", "Cannot read 5")
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            s.resolve_open_by_source("app.watcher", ErrorKind::Timeout)
+                .unwrap(),
+            1
+        );
+        assert_eq!(s.get(a.id).unwrap().unwrap().status, IssueStatus::Resolved);
+        assert_eq!(s.get(b.id).unwrap().unwrap().status, IssueStatus::Open);
+        assert_eq!(s.get(c.id).unwrap().unwrap().status, IssueStatus::Open);
+        // Already resolved: idempotent.
+        assert_eq!(
+            s.resolve_matching(ErrorKind::Timeout, "app.watcher", "cannot read 9")
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            s.resolve_matching(ErrorKind::Timeout, "app.index", "INDEX")
+                .unwrap(),
+            1
+        );
+        // It reopens on recurrence.
+        let (again, notified) = s
+            .record_issue(ErrorKind::Timeout, "app.index", "Index", None)
+            .unwrap();
+        assert!(notified && again.status == IssueStatus::Open);
     }
 
     #[test]

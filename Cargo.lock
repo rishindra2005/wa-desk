@@ -5213,6 +5213,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tracing",
+ "tracing-subscriber",
  "wa-core",
  "wa-testkit",
 ]
@@ -5245,6 +5246,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
  "url",
  "wa-automation",
  "wa-bridge",
