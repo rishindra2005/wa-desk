@@ -1,27 +1,91 @@
 name: Release
 
-# Push a version tag (e.g. `git tag v0.2.0 && git push origin v0.2.0`) to build the
-# Linux (.deb, .AppImage) and Windows (.msi, setup .exe) packages and publish them
-# as a GitHub Release.
+# Push a version tag (e.g. `git tag v0.5.0 && git push origin v0.5.0`) to publish a release:
+#   1. gate    - the tagged commit must have passed CI (waits for the CI run if it is still going)
+#   2. draft   - a draft release whose notes list every change since the previous tag
+#   3. build   - Linux (.deb, .AppImage) and Windows (.msi, setup .exe) packages, uploaded to the draft
+#   4. publish - SHA256SUMS.txt over all downloads, then the release goes public
+# Tags containing "-" (e.g. v0.5.0-rc.1) are published as pre-releases.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to (re)build, e.g. v0.2.0
+        description: Existing tag to (re)build, e.g. v0.5.0
         required: true
 
 permissions:
   contents: write
+  actions: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
   TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
+  gate:
+    name: CI passed for this commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Wait for the commit's CI run to succeed
+        run: |
+          sha=$(git rev-parse HEAD)
+          echo "Tag $TAG is commit $sha"
+          for i in $(seq 1 110); do
+            line=$(gh run list -R "$GITHUB_REPOSITORY" --workflow CI --commit "$sha" --limit 1 \
+                     --json status,conclusion,url --jq '.[0] | "\(.status) \(.conclusion) \(.url)"' 2>/dev/null || true)
+            case "$line" in
+              "completed success "*) echo "CI passed: ${line##* }"; exit 0 ;;
+              completed*) echo "::error::CI did not pass for $sha: $line"; exit 1 ;;
+              "") echo "No CI run for $sha yet (attempt $i)" ;;
+              *) echo "CI still running: $line" ;;
+            esac
+            sleep 30
+          done
+          echo "::error::Timed out waiting for CI on $sha (push the commit to main first so CI runs)"; exit 1
+
+  draft:
+    name: Draft release with changelog
+    needs: gate
+    runs-on: ubuntu-24.04
+    outputs:
+      release_id: ${{ steps.create.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+      - name: Release notes
+        run: scripts/release-notes.sh "$TAG" "https://github.com/$GITHUB_REPOSITORY" | tee notes.md
+      - name: Create (or reuse) the draft release
+        id: create
+        run: |
+          prerelease=false; [[ "$TAG" == *-* ]] && prerelease=true
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == \"$TAG\") | .id" | head -1)
+          if [[ -n "$id" ]]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -F draft=true -F prerelease=$prerelease \
+              -f name="wa-desk $TAG" -F body=@notes.md >/dev/null
+            echo "Reusing release $id"
+          else
+            id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f name="wa-desk $TAG" \
+                   -F draft=true -F prerelease=$prerelease -F body=@notes.md --jq .id)
+            echo "Created draft release $id"
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
   build:
     name: ${{ matrix.name }}
+    needs: draft
     strategy:
       fail-fast: false
       matrix:
@@ -81,7 +145,7 @@ jobs:
           scripts/build-bridge.sh ${{ matrix.triple }}
           ls -la app/src-tauri/binaries/
 
-      - name: Build and publish
+      - name: Build and upload to the draft release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -91,23 +155,34 @@ jobs:
           # The UI is built above; the release config turns Tauri's own UI build
           # step into a no-op (it ran from the wrong folder under tauri-action).
           args: --bundles ${{ matrix.bundles }} --config ${{ github.workspace }}/app/src-tauri/tauri.release.conf.json
-          tagName: ${{ env.TAG }}
-          releaseName: wa-desk ${{ env.TAG }}
-          releaseBody: |
-            Desktop WhatsApp archive and client (Rust + Tauri v2 + Svelte 5).
+          releaseId: ${{ needs.draft.outputs.release_id }}
 
-            **Downloads**
-            - Linux: `.deb` (Ubuntu/Debian) or `.AppImage` (any distro)
-            - Windows: `.msi` or `-setup.exe`
-
-            **WhatsApp bridge included.** The app ships the
-            [wa-bridge](https://github.com/rishindra2005/wa-bridge) service and starts it when no
-            bridge is running. Link your phone from **System → Bridge** (WhatsApp → Linked devices →
-            Link a device). If you already run your own bridge, set **Settings → WhatsApp bridge** to
-            *External*.
-
-            **Windows:** the Windows build is new. It compiles and passes lint in CI,
-            but it has not been tried on a real Windows PC yet, and phone sync (MTP)
-            and withdrawing notifications after you read a chat are Linux-only.
-          releaseDraft: false
-          prerelease: false
+  publish:
+    name: Checksums and publish
+    needs: [draft, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download the uploaded packages
+        run: |
+          id=${{ needs.draft.outputs.release_id }}
+          mkdir dist && cd dist
+          gh api "repos/$GITHUB_REPOSITORY/releases/$id/assets?per_page=100" --jq '.[] | "\(.id) \(.name)"' |
+          while read -r aid name; do
+            [[ "$name" == SHA256SUMS.txt ]] && continue
+            gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$aid" > "$name"
+          done
+          ls -la
+          count=$(ls | wc -l)
+          if [[ "$count" -lt 4 ]]; then echo "::error::expected at least 4 packages, found $count"; exit 1; fi
+      - name: SHA256SUMS.txt
+        run: |
+          cd dist && sha256sum -- * | tee ../SHA256SUMS.txt
+      - name: Upload checksums and publish
+        run: |
+          id=${{ needs.draft.outputs.release_id }}
+          old=$(gh api "repos/$GITHUB_REPOSITORY/releases/$id/assets?per_page=100" --jq '.[] | select(.name == "SHA256SUMS.txt") | .id')
+          [[ -n "$old" ]] && gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$old"
+          curl -sSf -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: text/plain" \
+            --data-binary @SHA256SUMS.txt \
+            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$id/assets?name=SHA256SUMS.txt" >/dev/null
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -F draft=false --jq .html_url
