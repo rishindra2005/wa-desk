@@ -295,3 +295,174 @@ async fn background_loops_run_and_stop() {
     assert!(!h.rec.named(events::BRIDGE_STATE).is_empty());
     token.cancel();
 }
+
+// ---- transient failure reporting ------------------------------------------
+
+mod health {
+    use super::*;
+    use std::time::{Duration, Instant};
+    use wa_core::{AppError, ErrorKind};
+    use wa_desk_lib::background::{TaskHealth, on_failure, on_success};
+
+    const TITLE: &str = "Cannot read new messages from the bridge database";
+    const SRC: &str = "app.watcher";
+
+    #[derive(Clone, Default)]
+    struct Buf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Buf {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buf {
+        type Writer = Buf;
+        fn make_writer(&'a self) -> Buf {
+            self.clone()
+        }
+    }
+
+    /// Run `f` with a DEBUG-level capture and return everything logged.
+    fn logs(f: impl FnOnce()) -> String {
+        let buf = Buf::default();
+        let sub = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_ansi(false)
+            .with_writer(buf.clone())
+            .finish();
+        tracing::subscriber::with_default(sub, f);
+        let bytes = buf.0.lock().unwrap().clone();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    fn timeout() -> AppError {
+        AppError::timeout("database query exceeded its deadline").with_detail("interrupted")
+    }
+
+    #[tokio::test]
+    async fn single_timeout_is_quiet_and_recovers_silently() {
+        let h = harness().await;
+        let mut th = TaskHealth::default();
+        let out = logs(|| {
+            on_failure(
+                &h.core,
+                "watcher",
+                TITLE,
+                &mut th,
+                Instant::now(),
+                &timeout(),
+            );
+            on_success(&h.core, "watcher", TITLE, &mut th);
+        });
+        assert!(!out.contains("WARN") && !out.contains("INFO"), "{out}");
+        assert!(out.contains("DEBUG"), "{out}");
+        assert!(h.core.issues().list().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn persistent_timeouts_raise_one_issue_and_recovery_resolves_it() {
+        let h = harness().await;
+        let mut th = TaskHealth::default();
+        let t0 = Instant::now();
+        // Many attempts but under 60 s: still nothing.
+        let out = logs(|| {
+            for i in 0..8 {
+                let at = t0 + Duration::from_secs(i);
+                on_failure(&h.core, "watcher", TITLE, &mut th, at, &timeout());
+            }
+        });
+        assert!(!out.contains("WARN"), "{out}");
+        assert!(h.core.issues().list().unwrap().is_empty());
+        // Crossing 60 s with >= 5 attempts escalates exactly once.
+        let out = logs(|| {
+            for i in 0..3 {
+                let at = t0 + Duration::from_secs(60 + i);
+                on_failure(&h.core, "watcher", TITLE, &mut th, at, &timeout());
+            }
+        });
+        assert_eq!(out.matches("WARN").count(), 1, "{out}");
+        let issues = h.core.issues().list().unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].source, SRC);
+        assert_eq!(issues[0].kind, ErrorKind::Timeout);
+        assert_eq!(issues[0].status, IssueStatus::Open);
+        // Recovery: INFO (an issue was raised) and the issue resolves.
+        let out = logs(|| on_success(&h.core, "watcher", TITLE, &mut th));
+        assert!(out.contains("INFO") && out.contains("recovered"), "{out}");
+        assert_eq!(
+            h.core.issues().list().unwrap()[0].status,
+            IssueStatus::Resolved
+        );
+        // A later blip starts a fresh streak.
+        let at = t0 + Duration::from_secs(500);
+        let out = logs(|| on_failure(&h.core, "watcher", TITLE, &mut th, at, &timeout()));
+        assert!(!out.contains("WARN"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn non_transient_errors_warn_and_raise_immediately() {
+        let h = harness().await;
+        let mut th = TaskHealth::default();
+        let t0 = Instant::now();
+        let e = AppError::internal("boom").with_detail("detail");
+        let out = logs(|| {
+            on_failure(&h.core, "watcher", TITLE, &mut th, t0, &e);
+            let at = t0 + Duration::from_secs(1);
+            on_failure(&h.core, "watcher", TITLE, &mut th, at, &e);
+        });
+        assert_eq!(out.matches("WARN").count(), 1, "{out}");
+        let issues = h.core.issues().list().unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].kind, ErrorKind::Internal);
+        assert_eq!(issues[0].count, 1);
+        // Recovery resolves it too.
+        on_success(&h.core, "watcher", TITLE, &mut th);
+        assert_eq!(
+            h.core.issues().list().unwrap()[0].status,
+            IssueStatus::Resolved
+        );
+    }
+
+    #[tokio::test]
+    async fn busy_is_transient_too() {
+        let h = harness().await;
+        let mut th = TaskHealth::default();
+        let t = "Search index could not be updated";
+        let e = AppError::busy("locked");
+        let out = logs(|| on_failure(&h.core, "index", t, &mut th, Instant::now(), &e));
+        assert!(!out.contains("WARN"), "{out}");
+        assert!(h.core.issues().list().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn startup_cleanup_resolves_stale_timeout_issues() {
+        let h = harness().await;
+        let s = h.core.issues();
+        let idx = "Search index could not be updated";
+        let names = "Chat names could not be refreshed";
+        let t = ErrorKind::Timeout;
+        s.record_issue(t, "app.watcher", TITLE, Some("interrupted"))
+            .unwrap();
+        s.record_issue(t, "app.index", idx, None).unwrap();
+        s.record_issue(ErrorKind::Internal, "app.watcher", "Different", None)
+            .unwrap();
+        s.record_issue(t, "app.chat_names", names, None).unwrap();
+        let mut w = TaskHealth::default();
+        let mut i = TaskHealth::default();
+        on_success(&h.core, "watcher", TITLE, &mut w);
+        on_success(&h.core, "index", idx, &mut i);
+        let open: Vec<_> = s
+            .list()
+            .unwrap()
+            .into_iter()
+            .filter(|x| x.status == IssueStatus::Open)
+            .map(|x| format!("{}/{:?}", x.source, x.kind))
+            .collect();
+        assert_eq!(open.len(), 2, "{open:?}");
+        assert!(open.contains(&"app.watcher/Internal".to_string()));
+        assert!(open.contains(&"app.chat_names/Timeout".to_string()));
+    }
+}

@@ -10,6 +10,7 @@ pub mod fsx;
 pub mod paths;
 pub mod time;
 pub mod traits;
+pub mod transient;
 pub mod types;
 
 pub use error::{AppError, ErrorKind, Result};

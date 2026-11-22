@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
 use wa_core::Result;
+use wa_core::transient::{FailureTracker, is_transient_kind};
 use wa_core::types::{ChatRef, ChatType};
 
 use crate::bridge_ro::{PAGE_ROWS, RoPool};
@@ -89,6 +90,17 @@ pub struct NameCache {
     own_pn: Option<String>,
     /// Bridge `chat_meta` rows (empty when the table does not exist yet).
     meta: HashMap<String, ChatMeta>,
+}
+
+impl NameCache {
+    /// Take every `whatsapp.db`-derived table from `other`.
+    fn copy_whatsmeow(&mut self, other: &NameCache) {
+        self.lid_to_pn.clone_from(&other.lid_to_pn);
+        self.pn_to_lid.clone_from(&other.pn_to_lid);
+        self.contacts.clone_from(&other.contacts);
+        self.own_users.clone_from(&other.own_users);
+        self.own_pn.clone_from(&other.own_pn);
+    }
 }
 
 /// One bridge `chat_meta` row.
@@ -332,6 +344,12 @@ pub struct NameResolver {
     wa: Arc<RoPool>,
     cache: RwLock<Option<(Instant, Arc<NameCache>)>>,
     loading: parking_lot::Mutex<()>,
+    /// Last snapshot whose `whatsapp.db` part loaded; survives `invalidate`.
+    last_good: RwLock<Option<Arc<NameCache>>>,
+    /// Consecutive transient `whatsapp.db` failures (for log escalation).
+    wa_failures: parking_lot::Mutex<FailureTracker>,
+    #[cfg(test)]
+    inject_wa_error: std::sync::Mutex<Option<wa_core::AppError>>,
 }
 
 impl NameResolver {
@@ -342,6 +360,10 @@ impl NameResolver {
             wa,
             cache: RwLock::new(None),
             loading: parking_lot::Mutex::new(()),
+            last_good: RwLock::new(None),
+            wa_failures: parking_lot::Mutex::new(FailureTracker::new()),
+            #[cfg(test)]
+            inject_wa_error: std::sync::Mutex::new(None),
         }
     }
 
@@ -372,12 +394,12 @@ impl NameResolver {
         {
             return Ok(Arc::clone(c));
         }
-        let fresh = Arc::new(self.load()?);
+        let fresh = Arc::new(self.load(Instant::now())?);
         *self.cache.write() = Some((Instant::now(), Arc::clone(&fresh)));
         Ok(fresh)
     }
 
-    fn load(&self) -> Result<NameCache> {
+    fn load(&self, now: Instant) -> Result<NameCache> {
         let mut c = NameCache {
             chat_names: load_chat_names(&self.bridge)?,
             ..Default::default()
@@ -386,14 +408,55 @@ impl NameResolver {
             Ok(m) => c.meta = m,
             Err(e) => tracing::warn!(kind = ?e.kind, "chat_meta unreadable; chat types from JIDs"),
         }
-        if self.wa.available() {
-            if let Err(e) = load_whatsmeow(&self.wa, &mut c) {
-                tracing::warn!(kind = ?e.kind, "whatsapp.db unreadable; names degrade");
-            }
-        } else {
+        if !self.wa.available() {
             tracing::debug!("whatsapp.db missing; names degrade to chats.name/phone");
+            return Ok(c);
+        }
+        match self.load_wa(&mut c) {
+            Ok(()) => {
+                self.wa_failures.lock().success();
+                *self.last_good.write() = Some(Arc::new(c.clone()));
+            }
+            Err(e) => self.wa_failed(&mut c, &e, now),
         }
         Ok(c)
+    }
+
+    fn load_wa(&self, c: &mut NameCache) -> Result<()> {
+        #[cfg(test)]
+        if let Some(e) = self.inject_wa_error.lock().ok().and_then(|g| g.clone()) {
+            return Err(e);
+        }
+        // Load into scratch so a failure part-way leaves `c` untouched.
+        let mut scratch = NameCache::default();
+        load_whatsmeow(&self.wa, &mut scratch)?;
+        c.copy_whatsmeow(&scratch);
+        Ok(())
+    }
+
+    /// A transient failure keeps the last good `whatsapp.db` data and stays at
+    /// DEBUG until it has persisted; anything else degrades and warns.
+    fn wa_failed(&self, c: &mut NameCache, e: &wa_core::AppError, now: Instant) {
+        if !is_transient_kind(e.kind) {
+            tracing::warn!(kind = ?e.kind, "whatsapp.db unreadable; names degrade");
+            return;
+        }
+        let (escalate, attempts) = {
+            let mut t = self.wa_failures.lock();
+            (t.failure(now), t.attempts())
+        };
+        let kept = match self.last_good.read().as_ref() {
+            Some(g) => {
+                c.copy_whatsmeow(g);
+                true
+            }
+            None => false,
+        };
+        if escalate {
+            tracing::warn!(kind = ?e.kind, attempts, kept, "whatsapp.db keeps failing; names are stale or degraded");
+        } else {
+            tracing::debug!(kind = ?e.kind, attempts, kept, "whatsapp.db busy; keeping last names");
+        }
     }
 }
 
@@ -721,6 +784,83 @@ pub(crate) mod tests {
         );
         assert_eq!(c.sender_name("919900000000", false), "+919900000000");
         assert!(!f.paths.whatsapp_db.exists());
+    }
+
+    #[test]
+    fn timeout_keeps_last_good_whatsapp_names() {
+        let f = Fixture::standard();
+        f.add_contact(DM_UNKNOWN, Some("Dave"), None, None, None);
+        let r = resolver(&f);
+        assert_eq!(r.snapshot().unwrap().chat_name(DM_UNKNOWN), "Dave");
+        *r.inject_wa_error.lock().unwrap() = Some(wa_core::AppError::timeout("deadline"));
+        r.invalidate();
+        // Reload hit a timeout: contact names survive from the last snapshot.
+        assert_eq!(r.snapshot().unwrap().chat_name(DM_UNKNOWN), "Dave");
+        assert_eq!(r.wa_failures.lock().attempts(), 1);
+        // Recovery resets the streak.
+        *r.inject_wa_error.lock().unwrap() = None;
+        r.invalidate();
+        r.snapshot().unwrap();
+        assert_eq!(r.wa_failures.lock().attempts(), 0);
+    }
+
+    #[test]
+    fn timeout_logs_debug_until_persistent() {
+        let f = Fixture::standard();
+        let r = resolver(&f);
+        r.snapshot().unwrap();
+        let t0 = Instant::now();
+        let mut c = NameCache::default();
+        let err = wa_core::AppError::timeout("deadline");
+        let logs = capture_logs(|| {
+            r.wa_failed(&mut c, &err, t0);
+            r.wa_failed(&mut c, &err, t0 + Duration::from_secs(30));
+        });
+        assert!(logs.contains("DEBUG") && !logs.contains("WARN"), "{logs}");
+        let logs = capture_logs(|| {
+            for i in 1..=5 {
+                r.wa_failed(&mut c, &err, t0 + Duration::from_secs(60 + i));
+            }
+        });
+        assert_eq!(logs.matches("WARN").count(), 1, "{logs}");
+        // Non-transient errors warn immediately, as before.
+        let logs = capture_logs(|| {
+            r.wa_failed(&mut c, &wa_core::AppError::internal("bad"), t0);
+        });
+        assert!(
+            logs.contains("WARN") && logs.contains("names degrade"),
+            "{logs}"
+        );
+    }
+
+    fn capture_logs(f: impl FnOnce()) -> String {
+        use std::sync::Mutex;
+        #[derive(Clone, Default)]
+        struct Buf(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Buf {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Buf {
+            type Writer = Buf;
+            fn make_writer(&'a self) -> Buf {
+                self.clone()
+            }
+        }
+        let buf = Buf::default();
+        let sub = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_ansi(false)
+            .with_writer(buf.clone())
+            .finish();
+        tracing::subscriber::with_default(sub, f);
+        let bytes = buf.0.lock().unwrap().clone();
+        String::from_utf8_lossy(&bytes).into_owned()
     }
 
     #[test]
