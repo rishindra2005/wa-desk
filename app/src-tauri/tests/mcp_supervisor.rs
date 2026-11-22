@@ -12,9 +12,10 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use wa_core::config::Paths;
 use wa_core::types::{McpState, Settings};
-use wa_desk_lib::bridge_supervisor::{
-    Clock, RotatingLog, RunningChild, SpawnSpec, Spawner, TokioClock,
-};
+use wa_desk_lib::bridge_supervisor::{Clock, RotatingLog, RunningChild, SpawnSpec, Spawner};
+// Only the unix test that runs a real fake `uv` needs the real clock.
+#[cfg(unix)]
+use wa_desk_lib::bridge_supervisor::TokioClock;
 use wa_desk_lib::mcp_supervisor::{
     McpDeps, McpSupervisor, PortProbe, PortState, Timings, banner, build_args, build_env,
     build_spec, find_uv, resolve_source, uv_candidates, venv_dir,
